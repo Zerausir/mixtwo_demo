@@ -47,7 +47,7 @@ def layout():
             html.Div(
                 className="table-card",
                 children=[
-                    html.H3("Resumen por sucursal (sin filtrar)", className="chart-title"),
+                    html.H3("Resumen por sucursal (excluye MATRIZ)", className="chart-title"),
                     dash_table.DataTable(
                         data=df_sucursal.round(2).to_dict("records"),
                         columns=[{"name": c, "id": c} for c in df_sucursal.columns],
@@ -73,7 +73,7 @@ def actualizar_tabla(sucursal, linea, marca):
     return html.Div(
         className="table-card",
         children=[
-            html.H3(f"Transacciones ({len(df)} de máx. 500 mostradas)", className="chart-title"),
+            html.H3(f"Líneas de producto ({len(df)} de máx. 500 mostradas)", className="chart-title"),
             dash_table.DataTable(
                 data=df.to_dict("records"),
                 columns=[{"name": c, "id": c} for c in df.columns],

@@ -123,12 +123,28 @@ def construir(csv_path: str, db_path: str) -> None:
     df["MARCA"] = df["PRODUCTO"].apply(derivar_marca)
     df["LINEA_PRODUCTO"] = df["CATEGORÍA"].apply(derivar_linea)
 
+    # --- ORDEN_ID: unidad real de "transacción" -------------------------
+    # Cada fila del CSV es una LÍNEA de producto dentro de una factura, no
+    # una transacción en sí. La factura real se identifica por
+    # FACTURERO + NÚMERO (confirmado en el EDA: 34,770 líneas -> 11,069
+    # órdenes reales, 3.14 líneas por orden en promedio). Usar la fila como
+    # unidad de "transacción" subestima el ticket promedio en ~3x.
+    df["ORDEN_ID"] = df["FACTURERO"].astype(str) + "-" + df["NÚMERO"].astype(str)
+
+    # --- ES_PUNTO_VENTA: MATRIZ no es una tienda retail comparable -------
+    # El EDA mostró que MATRIZ es 55% línea Hombre y 0% Playa -- mix
+    # incompatible con cualquier otra sucursal, consistente con un centro
+    # administrativo/mayorista, no un punto de venta al público. Se marca
+    # en vez de eliminarse, para que las vistas puedan excluirla
+    # explícitamente sin perder el dato.
+    df["ES_PUNTO_VENTA"] = df["SUCURSAL"] != "MATRIZ"
+
     # Solo las columnas que el dashboard necesita -- no se replica el detalle
     # completo de 55 columnas (costos de importación, aduana, etc. quedan
     # fuera del demo, no aportan a las vistas construidas).
     cols = [
-        "FECHA", "SUCURSAL", "CIUDAD", "VENDEDOR", "CÓDIGO", "PRODUCTO",
-        "CATEGORÍA", "MARCA", "LINEA_PRODUCTO", "CANTIDAD",
+        "FECHA", "ORDEN_ID", "SUCURSAL", "ES_PUNTO_VENTA", "CIUDAD", "VENDEDOR",
+        "CÓDIGO", "PRODUCTO", "CATEGORÍA", "MARCA", "LINEA_PRODUCTO", "CANTIDAD",
         "PRECIO FINAL", "COSTO TOTAL",
     ]
     ventas = df[cols].rename(columns={
@@ -140,6 +156,7 @@ def construir(csv_path: str, db_path: str) -> None:
     ventas = ventas.dropna(subset=["FECHA"])
 
     print(f"Filas procesadas: {len(ventas):,}")
+    print(f"Órdenes reales (ORDEN_ID únicos): {ventas['ORDEN_ID'].nunique():,}")
     print(f"Rango de fechas: {ventas['FECHA'].min().date()} a {ventas['FECHA'].max().date()}")
     print(f"Marca identificada en {(ventas['MARCA'] != 'SIN IDENTIFICAR').mean()*100:.1f}% de las filas")
 

@@ -44,6 +44,8 @@ def navigation() -> html.Header:
                 children=[
                     dcc.Link("Resumen", href="/", className="nav-link"),
                     dcc.Link("Marcas y líneas", href="/marcas-lineas", className="nav-link"),
+                    dcc.Link("Sucursales", href="/sucursales", className="nav-link"),
+                    dcc.Link("Predicción", href="/prediccion", className="nav-link"),
                     dcc.Link("Explorador", href="/explorador", className="nav-link"),
                 ],
             ),
