@@ -1,0 +1,16 @@
+# Datos del cliente -- NUNCA se versionan. El CSV crudo y la base de
+# datos derivada contienen ventas reales de mixtwo.
+data/*.csv
+data/*.db
+
+# Secretos
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistema
+.DS_Store
