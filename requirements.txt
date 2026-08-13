@@ -1,5 +1,4 @@
 dash==4.4.1
-plotly==6.9.0
 pandas==3.0.5
 python-dotenv==1.2.2
 Flask-Login==0.6.3
