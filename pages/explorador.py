@@ -1,88 +1,59 @@
 from __future__ import annotations
 
 import dash
-from dash import Input, Output, callback, dash_table, dcc, html
+from dash import Input, Output, callback, dash_table, html
 
-from components.ui import page_header
-from services.queries import explorar_ventas, opciones_filtro, ventas_por_sucursal
+from components.ui import empty_state, page_header
+from services.queries import explorar_ventas, hay_datos, ventas_por_sucursal
 
 dash.register_page(__name__, path="/explorador", name="Explorador")
 
+FILTROS = [
+    Input("filtro-sucursal", "value"), Input("filtro-marca", "value"), Input("filtro-linea", "value"),
+    Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
+]
+
 
 def layout():
-    opciones = opciones_filtro()
-    df_sucursal = ventas_por_sucursal()
-
-    return html.Div(
-        className="page-content",
-        children=[
-            page_header(
-                "Explorador de ventas",
-                "Filtra por sucursal, marca o línea de producto para revisar el detalle de transacciones.",
-            ),
-            html.Div(
-                className="filters-row",
-                children=[
-                    dcc.Dropdown(
-                        id="filtro-sucursal",
-                        options=[{"label": s, "value": s} for s in opciones["sucursales"]],
-                        placeholder="Sucursal",
-                        className="filter-dropdown",
-                    ),
-                    dcc.Dropdown(
-                        id="filtro-linea",
-                        options=[{"label": l, "value": l} for l in opciones["lineas"]],
-                        placeholder="Línea de producto",
-                        className="filter-dropdown",
-                    ),
-                    dcc.Dropdown(
-                        id="filtro-marca",
-                        options=[{"label": m, "value": m} for m in opciones["marcas"]],
-                        placeholder="Marca",
-                        className="filter-dropdown",
-                    ),
-                ],
-            ),
-            html.Div(id="tabla-explorador"),
-            html.Div(
-                className="table-card",
-                children=[
-                    html.H3("Resumen por sucursal (excluye MATRIZ)", className="chart-title"),
-                    dash_table.DataTable(
-                        data=df_sucursal.round(2).to_dict("records"),
-                        columns=[{"name": c, "id": c} for c in df_sucursal.columns],
-                        style_as_list_view=True,
-                        style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
-                        style_header={"fontWeight": "600", "backgroundColor": "#f5f7fa"},
-                        page_size=10,
-                    ),
-                ],
-            ),
-        ],
-    )
+    return html.Div(className="page-content", children=[
+        page_header(
+            "Explorador de ventas",
+            "Detalle de transacciones para los filtros seleccionados arriba. Útil para revisar "
+            "casos puntuales, no para tendencias generales (usa Resumen para eso).",
+        ),
+        html.Div(id="explorador-contenido"),
+    ])
 
 
-@callback(
-    Output("tabla-explorador", "children"),
-    Input("filtro-sucursal", "value"),
-    Input("filtro-linea", "value"),
-    Input("filtro-marca", "value"),
-)
-def actualizar_tabla(sucursal, linea, marca):
-    df = explorar_ventas(sucursal, linea, marca)
-    return html.Div(
-        className="table-card",
-        children=[
+@callback(Output("explorador-contenido", "children"), *FILTROS)
+def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin):
+    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin):
+        return empty_state()
+
+    df = explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    df_sucursal = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin)
+
+    return [
+        html.Div(className="table-card", children=[
             html.H3(f"Líneas de producto ({len(df)} de máx. 500 mostradas)", className="chart-title"),
             dash_table.DataTable(
                 data=df.to_dict("records"),
                 columns=[{"name": c, "id": c} for c in df.columns],
                 style_as_list_view=True,
                 style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "6px", "fontSize": "13px"},
-                style_header={"fontWeight": "600", "backgroundColor": "#f5f7fa"},
-                page_size=15,
-                sort_action="native",
-                filter_action="native",
+                style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                page_size=15, sort_action="native", filter_action="native",
             ),
-        ],
-    )
+        ]),
+        html.Div(className="table-card", children=[
+            html.H3("Resumen por sucursal", className="chart-title"),
+            dash_table.DataTable(
+                data=df_sucursal.round(2).to_dict("records"),
+                columns=[{"name": c, "id": c} for c in df_sucursal.columns],
+                style_as_list_view=True,
+                style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
+                style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                page_size=10,
+            ),
+        ]),
+    ]

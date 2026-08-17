@@ -113,6 +113,23 @@ def construir(csv_path: str, db_path: str) -> None:
     print(f"Leyendo {csv_path} ...")
     df = pd.read_csv(csv_path, encoding="cp1252", low_memory=False)
 
+    # --- Deduplicación por clave de venta -------------------------------
+    # El CSV es un cruce (JOIN) entre la venta y el/los lote(s) de compra o
+    # importación que la abastecieron. Cuando una venta se surte de más de
+    # un lote, la fila de venta se repite una vez por lote -- verificado:
+    # 889 líneas de venta (1,924 filas) se repiten 2 a 9 veces, con las
+    # columnas de VENTA idénticas y solo las de COMPRA (FOB, CIF, costos)
+    # cambiando. Sin deduplicar, esto infla ventas totales en ~1.4%
+    # ($9,982.75 sobre $708,589.23). Se deduplica ANTES de cualquier
+    # cálculo, usando solo las columnas del lado de venta como clave.
+    cols_clave_venta = [
+        "F. DOCUMENTO", "SUCURSAL", "FACTURERO", "NÚMERO", "CÓDIGO",
+        "PRODUCTO", "CATEGORÍA", "CANTIDAD", "PRECIO FINAL", "VENDEDOR",
+    ]
+    filas_antes = len(df)
+    df = df.drop_duplicates(subset=cols_clave_venta, keep="first")
+    print(f"Filas eliminadas por duplicación venta-compra: {filas_antes - len(df):,}")
+
     # Normalización de tipos
     df["PRECIO FINAL"] = pd.to_numeric(df["PRECIO FINAL"], errors="coerce").fillna(0.0)
     df["CANTIDAD"] = pd.to_numeric(df["CANTIDAD"], errors="coerce").fillna(0).astype(int)
@@ -123,13 +140,29 @@ def construir(csv_path: str, db_path: str) -> None:
     df["MARCA"] = df["PRODUCTO"].apply(derivar_marca)
     df["LINEA_PRODUCTO"] = df["CATEGORÍA"].apply(derivar_linea)
 
+    # Normalización: CIUDAD tiene 31 grupos de duplicados por formato en el
+    # origen (ej. "QUITO"/"Quito"/"quito" como 3 valores distintos, ver
+    # EDA Sección 4.1). No se usa todavía en el dashboard, pero se
+    # normaliza aquí para que quede resuelto antes de que el análisis
+    # geo-demográfico (Nivel Macro) lo necesite.
+    df["CIUDAD"] = df["CIUDAD"].astype(str).str.strip().str.upper()
+
     # --- ORDEN_ID: unidad real de "transacción" -------------------------
     # Cada fila del CSV es una LÍNEA de producto dentro de una factura, no
-    # una transacción en sí. La factura real se identifica por
-    # FACTURERO + NÚMERO (confirmado en el EDA: 34,770 líneas -> 11,069
-    # órdenes reales, 3.14 líneas por orden en promedio). Usar la fila como
-    # unidad de "transacción" subestima el ticket promedio en ~3x.
-    df["ORDEN_ID"] = df["FACTURERO"].astype(str) + "-" + df["NÚMERO"].astype(str)
+    # una transacción en sí. IMPORTANTE: FACTURERO + NÚMERO por sí solos
+    # NO son una clave única -- el mismo par se repite en fechas distintas
+    # y sucursales distintas (verificado: 1,150 de 11,069 "órdenes"
+    # agrupadas solo por FACTURERO+NÚMERO mezclaban >1 sucursal, algunas
+    # con meses de diferencia entre sí -- la numeración de factura no es
+    # global, se reutiliza). Se agrega FECHA y SUCURSAL a la clave para
+    # garantizar unicidad real: con esta clave, cada grupo tiene
+    # exactamente 1 sucursal por construcción.
+    df["ORDEN_ID"] = (
+            df["FACTURERO"].astype(str) + "-" +
+            df["NÚMERO"].astype(str) + "-" +
+            df["FECHA"].dt.strftime("%Y%m%d") + "-" +
+            df["SUCURSAL"].astype(str)
+    )
 
     # --- ES_PUNTO_VENTA: MATRIZ no es una tienda retail comparable -------
     # El EDA mostró que MATRIZ es 55% línea Hombre y 0% Playa -- mix
@@ -158,7 +191,7 @@ def construir(csv_path: str, db_path: str) -> None:
     print(f"Filas procesadas: {len(ventas):,}")
     print(f"Órdenes reales (ORDEN_ID únicos): {ventas['ORDEN_ID'].nunique():,}")
     print(f"Rango de fechas: {ventas['FECHA'].min().date()} a {ventas['FECHA'].max().date()}")
-    print(f"Marca identificada en {(ventas['MARCA'] != 'SIN IDENTIFICAR').mean()*100:.1f}% de las filas")
+    print(f"Marca identificada en {(ventas['MARCA'] != 'SIN IDENTIFICAR').mean() * 100:.1f}% de las filas")
 
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)

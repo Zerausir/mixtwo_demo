@@ -1,17 +1,21 @@
 """
 services/queries.py — Consultas analíticas sobre el mart de ventas.
 
-Revisado tras el EDA (ver notebook EDA_mixtwo.ipynb) -- correcciones clave
-respecto a la versión anterior:
+Todas las funciones de contenido (KPIs, gráficos) aceptan los mismos cinco
+parámetros de filtro, para que la barra de filtros global (definida en
+app.py, persiste entre páginas) controle lo que se muestra en cualquier
+página del dashboard:
 
-1. "Transacción" = orden real (ORDEN_ID), no fila/línea de producto. La
-   versión anterior contaba cada línea como una transacción, subestimando
-   el ticket promedio en ~3x (revisar notebook, Hallazgo 2).
-2. La tendencia temporal usa promedio DIARIO por mes, no suma por semana --
-   la suma sin normalizar hace ver un periodo parcial (el mes en curso)
-   como una caída cuando en realidad no lo es (Hallazgo 3).
-3. MATRIZ se excluye por defecto de las comparaciones entre sucursales --
-   no es un punto de venta al público comparable (Hallazgo 5).
+    sucursales: list[str] | None   -- None o [] = todas
+    marcas: list[str] | None       -- None o [] = todas
+    lineas: list[str] | None       -- None o [] = todas
+    fecha_ini, fecha_fin: str "YYYY-MM-DD" | None
+
+`MATRIZ` se excluye SIEMPRE de las opciones de sucursal y de los datos --
+no es un punto de venta al público (ver EDA, Sección 10). `SIN IDENTIFICAR`
+se excluye de las opciones de marca (no es útil para un usuario de negocio
+filtrar por "sin identificar"), pero esas filas se siguen sumando en los
+totales cuando no hay un filtro de marca activo.
 """
 from __future__ import annotations
 
@@ -19,32 +23,92 @@ import pandas as pd
 
 from services.database import get_connection
 
+MARCA_EXCLUIDA_DE_OPCIONES = "SIN IDENTIFICAR"
+SUCURSAL_EXCLUIDA = "MATRIZ"
 
-def resumen_general(incluir_matriz: bool = False) -> dict:
-    """KPIs de cabecera, calculados a nivel de ORDEN real, no de línea."""
+
+def _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, alias=""):
+    """Construye la cláusula WHERE + parámetros a partir de los filtros globales."""
+    pref = f"{alias}." if alias else ""
+    condiciones = [f"{pref}SUCURSAL != ?"]
+    params: list = [SUCURSAL_EXCLUIDA]
+
+    if sucursales:
+        condiciones.append(f"{pref}SUCURSAL IN ({','.join('?' * len(sucursales))})")
+        params.extend(sucursales)
+    if marcas:
+        condiciones.append(f"{pref}MARCA IN ({','.join('?' * len(marcas))})")
+        params.extend(marcas)
+    if lineas:
+        condiciones.append(f"{pref}LINEA_PRODUCTO IN ({','.join('?' * len(lineas))})")
+        params.extend(lineas)
+    if fecha_ini:
+        condiciones.append(f"DATE({pref}FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append(f"DATE({pref}FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+
+    return "WHERE " + " AND ".join(condiciones), params
+
+
+def rango_fechas_disponible() -> tuple[str, str]:
     con = get_connection()
-    filtro = "" if incluir_matriz else "WHERE ES_PUNTO_VENTA = 1"
+    fila = pd.read_sql("SELECT MIN(DATE(FECHA)) AS min_f, MAX(DATE(FECHA)) AS max_f FROM ventas", con).iloc[0]
+    con.close()
+    return fila["min_f"], fila["max_f"]
+
+
+def opciones_cascada(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin) -> dict:
+    """
+    Para cada filtro, calcula qué opciones siguen teniendo datos DADAS las
+    selecciones ACTUALES de los otros dos filtros + fecha -- esto es lo que
+    hace que los selectores se actualicen en cascada. Cada lista se calcula
+    ignorando su propio filtro (para no auto-restringirse a lo ya elegido).
+    """
+    con = get_connection()
+
+    where_para_sucursal, params_s = _where_clause(None, marcas_sel, lineas_sel, fecha_ini, fecha_fin)
+    sucursales = pd.read_sql(
+        f"SELECT DISTINCT SUCURSAL FROM ventas {where_para_sucursal} ORDER BY 1", con, params=params_s
+    )["SUCURSAL"].tolist()
+
+    where_para_marca, params_m = _where_clause(sucursales_sel, None, lineas_sel, fecha_ini, fecha_fin)
+    marcas = pd.read_sql(
+        f"SELECT DISTINCT MARCA FROM ventas {where_para_marca} AND MARCA != ? ORDER BY 1",
+        con, params=params_m + [MARCA_EXCLUIDA_DE_OPCIONES],
+    )["MARCA"].tolist()
+
+    where_para_linea, params_l = _where_clause(sucursales_sel, marcas_sel, None, fecha_ini, fecha_fin)
+    lineas = pd.read_sql(
+        f"SELECT DISTINCT LINEA_PRODUCTO FROM ventas {where_para_linea} ORDER BY 1", con, params=params_l
+    )["LINEA_PRODUCTO"].tolist()
+
+    con.close()
+    return {"sucursales": sucursales, "marcas": marcas, "lineas": lineas}
+
+
+def hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> bool:
+    con = get_connection()
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    n = pd.read_sql(f"SELECT COUNT(*) AS n FROM ventas {where}", con, params=params).iloc[0]["n"]
+    con.close()
+    return n > 0
+
+
+def resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> dict:
+    con = get_connection()
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
 
     ordenes = pd.read_sql(
-        f"""
-        SELECT ORDEN_ID, SUM(PRECIO_FINAL) AS valor_orden
-        FROM ventas
-        {filtro}
-        GROUP BY ORDEN_ID
-        """,
-        con,
+        f"SELECT ORDEN_ID, SUM(PRECIO_FINAL) AS valor_orden FROM ventas {where} GROUP BY ORDEN_ID",
+        con, params=params,
     )
     totales = pd.read_sql(
-        f"""
-        SELECT
-            SUM(PRECIO_FINAL) AS ventas_totales,
-            SUM(CANTIDAD) AS unidades_totales,
-            MIN(FECHA) AS fecha_min,
-            MAX(FECHA) AS fecha_max
-        FROM ventas
-        {filtro}
-        """,
-        con,
+        f"""SELECT SUM(PRECIO_FINAL) AS ventas_totales, SUM(CANTIDAD) AS unidades_totales,
+                   MIN(FECHA) AS fecha_min, MAX(FECHA) AS fecha_max
+            FROM ventas {where}""",
+        con, params=params,
     ).iloc[0]
     con.close()
 
@@ -59,91 +123,54 @@ def resumen_general(incluir_matriz: bool = False) -> dict:
     }
 
 
-def distribucion_ticket(incluir_matriz: bool = False) -> pd.DataFrame:
-    """Valor de cada orden real -- para el boxplot/histograma de ticket."""
+def distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
     con = get_connection()
-    filtro = "" if incluir_matriz else "WHERE ES_PUNTO_VENTA = 1"
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        f"""
-        SELECT ORDEN_ID, SUM(PRECIO_FINAL) AS valor_orden
-        FROM ventas
-        {filtro}
-        GROUP BY ORDEN_ID
-        """,
-        con,
+        f"SELECT ORDEN_ID, SUM(PRECIO_FINAL) AS valor_orden FROM ventas {where} GROUP BY ORDEN_ID",
+        con, params=params,
     )
     con.close()
     return df
 
 
-def ventas_diarias_por_mes(incluir_matriz: bool = False) -> pd.DataFrame:
-    """
-    Promedio de venta DIARIA por mes -- comparación "like-for-like" que no
-    penaliza el mes en curso por tener menos días con datos. Marca
-    explícitamente si el último mes está incompleto.
-    """
+def ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
     con = get_connection()
-    filtro = "" if incluir_matriz else "WHERE ES_PUNTO_VENTA = 1"
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
     diario = pd.read_sql(
-        f"""
-        SELECT
-            strftime('%Y-%m', FECHA) AS mes,
-            DATE(FECHA) AS dia,
-            SUM(PRECIO_FINAL) AS ventas_dia
-        FROM ventas
-        {filtro}
-        GROUP BY mes, dia
-        """,
-        con,
+        f"""SELECT strftime('%Y-%m', FECHA) AS mes, DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas_dia
+            FROM ventas {where} GROUP BY mes, dia""",
+        con, params=params,
     )
     con.close()
-
     resumen = diario.groupby("mes").agg(
-        promedio_diario=("ventas_dia", "mean"),
-        dias_con_datos=("dia", "nunique"),
+        promedio_diario=("ventas_dia", "mean"), dias_con_datos=("dia", "nunique"),
     ).reset_index()
-
     resumen["parcial"] = resumen["dias_con_datos"] < 25
     return resumen
 
 
-def ventas_por_dia_semana(incluir_matriz: bool = False) -> pd.DataFrame:
-    """Venta promedio por día de la semana -- estacionalidad semanal real."""
+def ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
     con = get_connection()
-    filtro = "" if incluir_matriz else "WHERE ES_PUNTO_VENTA = 1"
-    df = pd.read_sql(
-        f"""
-        SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas
-        FROM ventas
-        {filtro}
-        GROUP BY dia
-        """,
-        con,
-    )
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    df = pd.read_sql(f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY dia", con,
+                     params=params)
     con.close()
 
     df["dia"] = pd.to_datetime(df["dia"])
-    df["dow"] = df["dia"].dt.dayofweek  # 0=lunes
+    df["dow"] = df["dia"].dt.dayofweek
     nombres = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
-
     resumen = df.groupby("dow")["ventas"].mean().reindex(range(7))
     resumen.index = nombres
     return resumen.reset_index().rename(columns={"index": "dia_semana", "ventas": "venta_promedio"})
 
 
-def ventas_por_linea() -> pd.DataFrame:
+def ventas_por_linea(sucursales, marcas, fecha_ini, fecha_fin) -> pd.DataFrame:
     con = get_connection()
+    where, params = _where_clause(sucursales, marcas, None, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        """
-        SELECT
-            LINEA_PRODUCTO AS linea,
-            SUM(PRECIO_FINAL) AS ventas,
-            SUM(CANTIDAD) AS unidades
-        FROM ventas
-        GROUP BY linea
-        ORDER BY ventas DESC
-        """,
-        con,
+        f"SELECT LINEA_PRODUCTO AS linea, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades FROM ventas {where} GROUP BY linea ORDER BY ventas DESC",
+        con, params=params,
     )
     con.close()
     total = df["ventas"].sum()
@@ -151,159 +178,83 @@ def ventas_por_linea() -> pd.DataFrame:
     return df
 
 
-def ventas_por_marca(top_n: int = 12) -> pd.DataFrame:
+def ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin, top_n: int = 12) -> pd.DataFrame:
     con = get_connection()
+    where, params = _where_clause(sucursales, None, lineas, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        """
-        SELECT
-            MARCA AS marca,
-            SUM(PRECIO_FINAL) AS ventas,
-            SUM(CANTIDAD) AS unidades
-        FROM ventas
-        WHERE MARCA != 'SIN IDENTIFICAR'
-        GROUP BY marca
-        ORDER BY ventas DESC
-        LIMIT ?
-        """,
-        con,
-        params=(top_n,),
+        f"SELECT MARCA AS marca, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades FROM ventas {where} AND MARCA != ? GROUP BY marca ORDER BY ventas DESC LIMIT ?",
+        con, params=params + [MARCA_EXCLUIDA_DE_OPCIONES, top_n],
     )
     con.close()
     return df
 
 
-def ventas_por_sucursal(incluir_matriz: bool = False) -> pd.DataFrame:
+def ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
     con = get_connection()
-    filtro = "" if incluir_matriz else "WHERE ES_PUNTO_VENTA = 1"
+    where, params = _where_clause(None, marcas, lineas, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        f"""
-        SELECT
-            SUCURSAL AS sucursal,
-            SUM(PRECIO_FINAL) AS ventas,
-            SUM(CANTIDAD) AS unidades,
-            COUNT(DISTINCT ORDEN_ID) AS ordenes
-        FROM ventas
-        {filtro}
-        GROUP BY sucursal
-        ORDER BY ventas DESC
-        """,
-        con,
+        f"""SELECT SUCURSAL AS sucursal, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades,
+                   COUNT(DISTINCT ORDEN_ID) AS ordenes
+            FROM ventas {where} GROUP BY sucursal ORDER BY ventas DESC""",
+        con, params=params,
     )
     con.close()
     return df
 
 
-def mix_linea_por_sucursal(incluir_matriz: bool = True) -> pd.DataFrame:
-    """
-    Composición % de líneas dentro de cada sucursal -- para el heatmap de
-    heterogeneidad. Incluye MATRIZ por defecto aquí, con la etiqueta
-    visible, porque el punto del gráfico es justamente mostrar que MATRIZ
-    no se comporta como el resto (ver Hallazgo 5 del EDA).
-    """
+def mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin) -> pd.DataFrame:
     con = get_connection()
-    filtro = "" if incluir_matriz else "WHERE ES_PUNTO_VENTA = 1"
+    where, params = _where_clause(None, marcas, None, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        f"""
-        SELECT SUCURSAL AS sucursal, LINEA_PRODUCTO AS linea, SUM(PRECIO_FINAL) AS ventas
-        FROM ventas
-        {filtro}
-        GROUP BY sucursal, linea
-        """,
-        con,
+        f"SELECT SUCURSAL AS sucursal, LINEA_PRODUCTO AS linea, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY sucursal, linea",
+        con, params=params,
     )
     con.close()
-
     tabla = df.pivot_table(index="sucursal", columns="linea", values="ventas", aggfunc="sum", fill_value=0)
-    tabla_pct = tabla.div(tabla.sum(axis=1), axis=0) * 100
-    return tabla_pct.round(1)
+    if tabla.empty:
+        return tabla
+    return (tabla.div(tabla.sum(axis=1), axis=0) * 100).round(1)
 
 
-def opciones_filtro() -> dict:
+def explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, limite: int = 500) -> pd.DataFrame:
     con = get_connection()
-    sucursales = pd.read_sql("SELECT DISTINCT SUCURSAL FROM ventas ORDER BY 1", con)["SUCURSAL"].tolist()
-    lineas = pd.read_sql("SELECT DISTINCT LINEA_PRODUCTO FROM ventas ORDER BY 1", con)["LINEA_PRODUCTO"].tolist()
-    marcas = pd.read_sql(
-        "SELECT DISTINCT MARCA FROM ventas WHERE MARCA != 'SIN IDENTIFICAR' ORDER BY 1", con
-    )["MARCA"].tolist()
-    con.close()
-    return {"sucursales": sucursales, "lineas": lineas, "marcas": marcas}
-
-
-def explorar_ventas(sucursal: str | None, linea: str | None, marca: str | None, limite: int = 500) -> pd.DataFrame:
-    condiciones = []
-    params: list = []
-
-    if sucursal:
-        condiciones.append("SUCURSAL = ?")
-        params.append(sucursal)
-    if linea:
-        condiciones.append("LINEA_PRODUCTO = ?")
-        params.append(linea)
-    if marca:
-        condiciones.append("MARCA = ?")
-        params.append(marca)
-
-    where = f"WHERE {' AND '.join(condiciones)}" if condiciones else ""
-    params.append(limite)
-
-    con = get_connection()
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        f"""
-        SELECT
-            DATE(FECHA) AS fecha,
-            ORDEN_ID AS orden,
-            SUCURSAL AS sucursal,
-            MARCA AS marca,
-            LINEA_PRODUCTO AS linea,
-            PRODUCTO AS producto,
-            CANTIDAD AS cantidad,
-            PRECIO_FINAL AS precio_final
-        FROM ventas
-        {where}
-        ORDER BY FECHA DESC
-        LIMIT ?
-        """,
-        con,
-        params=params,
+        f"""SELECT DATE(FECHA) AS fecha, ORDEN_ID AS orden, SUCURSAL AS sucursal, MARCA AS marca,
+                   LINEA_PRODUCTO AS linea, PRODUCTO AS producto, CANTIDAD AS cantidad, PRECIO_FINAL AS precio_final
+            FROM ventas {where} ORDER BY FECHA DESC LIMIT ?""",
+        con, params=params + [limite],
     )
     con.close()
     return df
 
 
-def pronostico_corto_plazo(semanas_backtest: int = 4) -> dict:
+def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, semanas_backtest: int = 4) -> dict:
     """
-    Pronóstico ingenuo estacional: para cada día de la semana, usa el
-    promedio de ese mismo día en semanas anteriores. Deliberadamente
-    simple -- es lo que los datos actuales pueden sostener de forma
-    honesta (Hallazgo 4 del EDA: hay patrón semanal real, no hay
-    estacionalidad anual). No es una red neuronal ni gradient boosting;
-    es un baseline transparente con error medido -- lo apropiado para un
-    demo con 6 meses de datos, no un modelo que promete más de lo que
-    los datos pueden respaldar.
+    Pronóstico baseline (promedio estacional por día de semana), filtrable
+    solo por sucursal y fecha -- NO por marca/línea. El EDA (Sección 8.6)
+    solo validó ausencia de intermitencia a nivel de sucursal; combinar con
+    marca/línea implicaría mostrar un modelo nunca respaldado por backtest.
     """
     con = get_connection()
+    where, params = _where_clause(sucursales, None, None, fecha_ini, fecha_fin)
     df = pd.read_sql(
-        """
-        SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas
-        FROM ventas
-        WHERE ES_PUNTO_VENTA = 1
-        GROUP BY dia
-        ORDER BY dia
-        """,
-        con,
-    )
+        f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY dia ORDER BY dia", con,
+        params=params)
     con.close()
+
+    if len(df) < 21:
+        return {"suficiente": False}
 
     df["dia"] = pd.to_datetime(df["dia"])
     df["dow"] = df["dia"].dt.dayofweek
     df = df.sort_values("dia").reset_index(drop=True)
 
-    dias_backtest = semanas_backtest * 7
-    entrenamiento = df.iloc[:-dias_backtest] if len(df) > dias_backtest else df.iloc[:0]
-    prueba = df.iloc[-dias_backtest:] if len(df) > dias_backtest else df
+    dias_backtest = min(semanas_backtest * 7, len(df) // 3)
+    entrenamiento = df.iloc[:-dias_backtest]
+    prueba = df.iloc[-dias_backtest:]
 
     promedio_por_dow = entrenamiento.groupby("dow")["ventas"].mean()
-
     prueba = prueba.copy()
     prueba["prediccion"] = prueba["dow"].map(promedio_por_dow)
     prueba["error_abs_pct"] = (prueba["ventas"] - prueba["prediccion"]).abs() / prueba["ventas"].replace(0, pd.NA)
@@ -316,6 +267,7 @@ def pronostico_corto_plazo(semanas_backtest: int = 4) -> dict:
     forecast["prediccion"] = forecast["dow"].map(promedio_todo)
 
     return {
+        "suficiente": True,
         "historico": df[["dia", "ventas"]],
         "backtest": prueba[["dia", "ventas", "prediccion"]],
         "forecast": forecast[["dia", "prediccion"]],
