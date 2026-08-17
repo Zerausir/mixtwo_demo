@@ -146,7 +146,12 @@ def ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> 
     resumen = diario.groupby("mes").agg(
         promedio_diario=("ventas_dia", "mean"), dias_con_datos=("dia", "nunique"),
     ).reset_index()
-    resumen["parcial"] = resumen["dias_con_datos"] < 25
+    # "Incompleto" cubre dos causas distintas: (a) corte de la muestra a
+    # mitad de mes (afecta a todos los filtros, solo el último mes del
+    # rango global), o (b) la sucursal/marca/línea filtrada no tuvo
+    # actividad todo el mes (ej. tienda que abrió a fin de mes). Se
+    # etiqueta neutral en vez de asumir cuál de las dos aplica.
+    resumen["incompleto"] = resumen["dias_con_datos"] < 25
     return resumen
 
 

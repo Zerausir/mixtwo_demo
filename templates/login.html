@@ -4,90 +4,164 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ cliente_nombre }} — Ingreso</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Inter:wght@400;500;600;700&display=swap"
+          rel="stylesheet">
     <style>
-        * { box-sizing: border-box; }
+        :root {
+            --bg-soft: #FBF3F1;
+            --blush: #E8B4BB;
+            --blush-light: #F5DEE1;
+            --rose-deep: #9C4F5C;
+            --ink: #201A1A;
+            --taupe: #8A7C79;
+            --gold: #C9A96A;
+            --line: #EDE1DD;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             margin: 0;
-            font-family: Inter, "Segoe UI", Arial, sans-serif;
-            background: #0b1f33;
+            font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(160deg, var(--bg-soft) 0%, var(--blush-light) 100%);
             display: flex;
             align-items: center;
             justify-content: center;
             min-height: 100vh;
         }
+
         .login-card {
             background: white;
-            border-radius: 12px;
-            padding: 40px 36px;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 44px 40px;
             width: 100%;
-            max-width: 360px;
-            box-shadow: 0 20px 50px rgba(0,0,0,0.25);
+            max-width: 380px;
+            box-shadow: 0 24px 60px rgba(156, 79, 92, 0.15);
         }
+
+        .brand-mark {
+            width: 44px;
+            height: 44px;
+            background: var(--rose-deep);
+            color: white;
+            border-radius: 11px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Playfair Display', Georgia, serif;
+            font-weight: 700;
+            font-size: 17px;
+            margin-bottom: 18px;
+        }
+
         .login-card h1 {
-            font-size: 20px;
+            font-family: 'Playfair Display', Georgia, serif;
+            font-size: 24px;
+            font-weight: 700;
             margin: 0 0 4px 0;
-            color: #0b1f33;
+            color: var(--ink);
         }
+
+        .login-card h1::after {
+            content: "";
+            display: block;
+            width: 44px;
+            height: 3px;
+            margin-top: 10px;
+            background: linear-gradient(90deg, var(--gold), var(--blush));
+            border-radius: 2px;
+        }
+
         .login-card p.subtitle {
-            margin: 0 0 24px 0;
-            color: #64748b;
-            font-size: 14px;
+            margin: 16px 0 26px 0;
+            color: var(--taupe);
+            font-size: 13.5px;
+            line-height: 1.5;
         }
+
         label {
             display: block;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
-            color: #0b1f33;
-            margin-bottom: 6px;
+            color: var(--ink);
+            text-transform: uppercase;
+            letter-spacing: 0.03em;
+            margin-bottom: 7px;
         }
+
         input {
             width: 100%;
-            padding: 10px 12px;
-            border: 1px solid #d0d7de;
-            border-radius: 8px;
-            margin-bottom: 16px;
+            padding: 11px 13px;
+            border: 1px solid var(--line);
+            border-radius: 9px;
+            margin-bottom: 18px;
             font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            transition: border-color 0.15s ease;
         }
+
         input:focus {
             outline: none;
-            border-color: #1464f4;
+            border-color: var(--rose-deep);
+            box-shadow: 0 0 0 3px var(--blush-light);
         }
+
         button {
             width: 100%;
-            padding: 11px;
-            background: #1464f4;
+            padding: 12px;
+            background: var(--rose-deep);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 9px;
             font-size: 14px;
             font-weight: 600;
+            font-family: 'Inter', sans-serif;
             cursor: pointer;
+            transition: background 0.15s ease;
         }
-        button:hover { background: #0f50c3; }
+
+        button:hover {
+            background: #833E49;
+        }
+
         .error {
-            background: #fef2f2;
-            color: #b91c1c;
-            padding: 10px 12px;
-            border-radius: 8px;
+            background: #FDF2F3;
+            color: #A83B4A;
+            border: 1px solid #F3C6CC;
+            padding: 11px 13px;
+            border-radius: 9px;
             font-size: 13px;
-            margin-bottom: 16px;
+            margin-bottom: 18px;
+        }
+
+        .footnote {
+            margin-top: 24px;
+            text-align: center;
+            font-size: 11.5px;
+            color: var(--taupe);
         }
     </style>
 </head>
 <body>
-    <div class="login-card">
-        <h1>{{ cliente_nombre }}</h1>
-        <p class="subtitle">Demo de inteligencia de datos — acceso restringido</p>
-        {% if error %}
-        <div class="error">{{ error }}</div>
-        {% endif %}
-        <form method="POST">
-            <label for="username">Usuario</label>
-            <input type="text" id="username" name="username" autocomplete="username" required>
-            <label for="password">Contraseña</label>
-            <input type="password" id="password" name="password" autocomplete="current-password" required>
-            <button type="submit">Ingresar</button>
-        </form>
-    </div>
+<div class="login-card">
+    <div class="brand-mark">{{ cliente_nombre[:2]|upper }}</div>
+    <h1>{{ cliente_nombre }}</h1>
+    <p class="subtitle">Panel de inteligencia de datos — acceso restringido a usuarios autorizados.</p>
+    {% if error %}
+    <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="POST">
+        <label for="username">Usuario</label>
+        <input type="text" id="username" name="username" autocomplete="username" required>
+        <label for="password">Contraseña</label>
+        <input type="password" id="password" name="password" autocomplete="current-password" required>
+        <button type="submit">Ingresar</button>
+    </form>
+    <div class="footnote">Muestra de datos fija, no conectada en vivo al sistema de mixtwo.</div>
+</div>
 </body>
 </html>

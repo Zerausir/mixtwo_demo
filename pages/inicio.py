@@ -44,10 +44,10 @@ def layout():
 
 
 def _fig_tendencia(df) -> go.Figure:
-    colores = ["#D8C4C7" if parcial else "#9C4F5C" for parcial in df["parcial"]]
+    colores = ["#D8C4C7" if incompleto else "#9C4F5C" for incompleto in df["incompleto"]]
     fig = go.Figure(go.Bar(
         x=df["mes"], y=df["promedio_diario"], marker_color=colores,
-        text=["Mes parcial" if p else "" for p in df["parcial"]], textposition="outside",
+        text=["Datos incompletos" if p else "" for p in df["incompleto"]], textposition="outside",
         hovertemplate="%{x}<br>Promedio diario: $%{y:,.0f}<extra></extra>",
     ))
     fig.update_layout(margin=dict(l=40, r=20, t=20, b=40), height=320,
@@ -98,7 +98,12 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin):
             chart_title_with_help(
                 "Venta promedio diaria por mes",
                 "Se usa el promedio por día, no la suma del mes completo, para que un mes con "
-                "menos días de datos no se vea como una caída de ventas.",
+                "menos días de datos no se vea como una caída de ventas. Las barras en color claro "
+                "marcadas 'Datos incompletos' tienen menos de 25 días de venta registrados dentro de "
+                "los filtros elegidos — puede ser porque el corte de la muestra ocurre a mitad de ese "
+                "mes, o porque la tienda/marca/línea filtrada no tuvo actividad todo el mes (por "
+                "ejemplo, una tienda que abrió a fin de mes). Compáralas con cuidado frente a las "
+                "demás.",
             ),
             dcc.Graph(figure=_fig_tendencia(tendencia), config={"displayModeBar": False}),
         ]),
