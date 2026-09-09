@@ -56,7 +56,10 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
             chart_header(
                 "Composición de ventas por línea, dentro de cada sucursal",
                 "Cada fila suma 100%. Muestra qué porcentaje de las ventas de esa tienda "
-                "corresponde a cada línea de producto — no el volumen total de la tienda.",
+                "corresponde a cada línea de producto — no el volumen total de la tienda. "
+                "El filtro de 'Línea de producto' de arriba no afecta este gráfico en particular "
+                "(sí afecta la tabla de abajo): filtrar por línea aquí sería circular, porque la "
+                "línea es justamente el eje que se está desglosando.",
             ),
             dcc.Graph(figure=_fig_heatmap(mix), config={"displayModeBar": False}) if not mix.empty else empty_state(),
         ]),

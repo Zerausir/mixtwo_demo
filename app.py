@@ -62,12 +62,14 @@ def navigation() -> html.Div:
                     html.Nav(
                         className="nav-links",
                         children=[
-                            dcc.Link("Resumen", href="/", className="nav-link"),
-                            dcc.Link("Marcas y líneas", href="/marcas-lineas", className="nav-link"),
-                            dcc.Link("Sucursales", href="/sucursales", className="nav-link"),
-                            dcc.Link("Cuentas mayoristas", href="/mayoristas", className="nav-link"),
-                            dcc.Link("Predicción", href="/prediccion", className="nav-link"),
-                            dcc.Link("Explorador", href="/explorador", className="nav-link"),
+                            dcc.Link("Resumen", href="/", id="nav-link-/", className="nav-link"),
+                            dcc.Link("Marcas y líneas", href="/marcas-lineas", id="nav-link-/marcas-lineas",
+                                     className="nav-link"),
+                            dcc.Link("Sucursales", href="/sucursales", id="nav-link-/sucursales", className="nav-link"),
+                            dcc.Link("Cuentas mayoristas", href="/mayoristas", id="nav-link-/mayoristas",
+                                     className="nav-link"),
+                            dcc.Link("Predicción", href="/prediccion", id="nav-link-/prediccion", className="nav-link"),
+                            dcc.Link("Explorador", href="/explorador", id="nav-link-/explorador", className="nav-link"),
                         ],
                     ),
                     html.Div(
@@ -219,6 +221,20 @@ def limpiar_filtros(n_clicks):
 def actualizar_filtros_deshabilitados(pathname):
     aplica = FILTROS_POR_PAGINA.get(pathname, {"sucursal": True, "marca": True, "linea": True})
     return not aplica["sucursal"], not aplica["marca"], not aplica["linea"]
+
+
+NAV_PATHS = ["/", "/marcas-lineas", "/sucursales", "/mayoristas", "/prediccion", "/explorador"]
+
+
+@callback(
+    [Output(f"nav-link-{p}", "className") for p in NAV_PATHS],
+    Input("url-actual", "pathname"),
+)
+def marcar_pagina_activa(pathname):
+    return [
+        "nav-link active" if p == pathname else "nav-link"
+        for p in NAV_PATHS
+    ]
 
 
 def _etiqueta_lista(valores) -> str:

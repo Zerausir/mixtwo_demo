@@ -64,18 +64,23 @@ def _fig_boxplot_ticket(df) -> go.Figure:
     Ojo con esta función si se vuelve a tocar: la distribución de
     valor_orden está muy sesgada a la derecha (mediana ~40, pero algunos
     valores llegan a ~990). Sin capar el eje, la caja queda comprimida en
-    una franja angosta del gráfico y Plotly termina amontonando/rotando
-    las etiquetas de hover de la caja y los puntos atípicos por falta de
-    espacio -- efecto visible y confuso en pantalla. Se resuelve capando
-    el eje X a un rango razonable (P99) y quitando los puntos individuales
-    de atípicos (boxpoints=False): la caja igual muestra mediana/cuartiles/
-    bigotes con claridad, y el hover queda con una sola línea de texto.
+    una franja angosta del gráfico. Se intentó primero solo con
+    boxpoints=False + hovertemplate personalizado, pero NO fue suficiente:
+    go.Box() muestra automáticamente una etiqueta de hover POR CADA
+    estadístico (min, Q1, mediana, promedio, Q3, max), algo que
+    hovertemplate no controla -- son anotaciones propias del trace Box,
+    independientes de esa propiedad. Con la caja tan angosta, esas 6
+    etiquetas quedan tan cerca entre sí que Plotly las rota/superpone para
+    evitar que se tapen, produciendo el amontonamiento visible en pantalla.
+    La solución real es apagar el hover del todo (hoverinfo="skip") -- el
+    texto explicativo permanente (chart_header) ya cubre lo que el hover
+    hubiera mostrado.
     """
     limite_x = max(df["valor_orden"].quantile(0.99), 1)
     fig = go.Figure(go.Box(
         x=df["valor_orden"], marker_color="#9C4F5C", boxmean=True, name="",
         boxpoints=False,
-        hovertemplate="Mediana y cuartiles del valor de orden<extra></extra>",
+        hoverinfo="skip",
     ))
     fig.update_layout(margin=dict(l=20, r=20, t=20, b=40), height=190,
                       plot_bgcolor="white", paper_bgcolor="white",

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import dash
-from dash import Input, Output, callback, dash_table, html
+import plotly.graph_objects as go
+from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import empty_state, formato_entero, formato_moneda, kpi_card, page_header
+from components.ui import chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header
 from services.queries import ranking_clientes, resumen_mayoristas
 
 dash.register_page(__name__, path="/mayoristas", name="Cuentas mayoristas")
 
+FONT = dict(family="Inter, Segoe UI, Arial, sans-serif", size=12)
 FILTROS = [
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
     Input("filtro-mayorista-umbral", "value"),
@@ -26,6 +28,31 @@ def layout():
         ),
         html.Div(id="mayoristas-contenido"),
     ])
+
+
+def _fig_ranking(ranking, umbral: int, top_n: int = 15) -> go.Figure:
+    """
+    Barra horizontal de los clientes con más órdenes -- el punto de esta
+    página no es solo la tabla, es que el SALTO entre las 2 cuentas
+    mayoristas y el resto se vea de un vistazo, igual al patrón de
+    'Casos más extremos' del módulo Control de OBTEL. Colorea por encima/
+    debajo del umbral para que mover el número en la barra de filtros
+    tenga un efecto visual inmediato, no solo en la tabla.
+    """
+    top = ranking.head(top_n).iloc[::-1]  # invertido para que el #1 quede arriba
+    colores = ["#9C4F5C" if o > umbral else "#D8C4C7" for o in top["ordenes"]]
+
+    fig = go.Figure(go.Bar(
+        x=top["ordenes"], y=top["cliente"], orientation="h", marker_color=colores,
+        text=top["ordenes"], textposition="outside",
+        hovertemplate="%{y}<br>%{x} órdenes<extra></extra>",
+    ))
+    fig.add_vline(x=umbral, line_dash="dash", line_color="#8A7C79",
+                  annotation_text=f"Umbral: {umbral}", annotation_position="top")
+    fig.update_layout(margin=dict(l=170, r=40, t=30, b=40), height=420,
+                      plot_bgcolor="white", paper_bgcolor="white",
+                      xaxis_title="Órdenes distintas en el periodo", font=FONT)
+    return fig
 
 
 @callback(Output("mayoristas-contenido", "children"), *FILTROS)
@@ -66,10 +93,21 @@ def actualizar(fecha_ini, fecha_fin, umbral):
                 "Referencia, sin excluir nada",
             ),
         ]),
+        html.Div(className="chart-card", children=[
+            chart_header(
+                "Top clientes por número de órdenes",
+                "Cada barra es un cliente identificado. La línea punteada marca el umbral actual -- "
+                "muévelo en el control 'Cuentas mayoristas' de arriba y observa cómo cambia qué barras "
+                "quedan resaltadas. El salto entre la segunda y la tercera barra es la evidencia "
+                "visual de que hay un grupo de cuentas cualitativamente distinto al resto, no un "
+                "corte arbitrario.",
+            ),
+            dcc.Graph(figure=_fig_ranking(ranking, umbral), config={"displayModeBar": False}),
+        ]),
         html.Div(
             className="note-box important",
             children=[
-                html.Strong("Cómo leer esta tabla: "),
+                html.Strong("Cómo leer la tabla de abajo: "),
                 "las filas resaltadas superan el umbral actual y se consideran mayoristas mientras "
                 "el control de arriba esté activado. La columna 'Formato' es una señal de apoyo, no "
                 "la regla principal: un RUC de empresa con pocas órdenes probablemente es una "
