@@ -11,6 +11,7 @@ from components.ui import (
     formato_moneda,
     kpi_card,
     page_header,
+    umbral_efectivo,
 )
 from services.queries import (
     distribucion_ticket,
@@ -26,6 +27,7 @@ FONT = dict(family="Inter, Segoe UI, Arial, sans-serif", size=12)
 FILTROS = [
     Input("filtro-sucursal", "value"), Input("filtro-marca", "value"), Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
 ]
 
 
@@ -36,7 +38,8 @@ def layout():
             page_header(
                 "Resumen ejecutivo",
                 "Vista general del negocio para el periodo y los filtros seleccionados arriba. "
-                "Se excluye siempre el centro administrativo (MATRIZ).",
+                "Se excluye siempre el centro administrativo (MATRIZ) y, según el control de "
+                "'Cuentas mayoristas' de arriba, las cuentas que superan el umbral configurado.",
             ),
             html.Div(id="inicio-contenido"),
         ],
@@ -77,14 +80,16 @@ def _fig_dia_semana(df) -> go.Figure:
 
 
 @callback(Output("inicio-contenido", "children"), *FILTROS)
-def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin):
-    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin):
+def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+
+    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef):
         return empty_state()
 
-    resumen = resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin)
-    tendencia = ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin)
-    ticket = distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin)
-    dia_semana = ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    resumen = resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    tendencia = ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    ticket = distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    dia_semana = ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
     return [
         html.Div(className="kpi-grid", children=[

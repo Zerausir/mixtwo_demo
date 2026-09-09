@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc, html
 
-from components.ui import chart_title_with_help, empty_state, page_header
+from components.ui import chart_title_with_help, empty_state, page_header, umbral_efectivo
 from services.queries import pronostico_corto_plazo
 
 dash.register_page(__name__, path="/prediccion", name="Predicción")
@@ -13,6 +13,7 @@ FONT = dict(family="Inter, Segoe UI, Arial, sans-serif", size=12)
 FILTROS = [
     Input("filtro-sucursal", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
 ]
 
 
@@ -53,8 +54,9 @@ def _fig_forecast(forecast) -> go.Figure:
 
 
 @callback(Output("prediccion-contenido", "children"), *FILTROS)
-def actualizar(sucursales, fecha_ini, fecha_fin):
-    resultado = pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin)
+def actualizar(sucursales, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+    resultado = pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_ef)
 
     if not resultado.get("suficiente"):
         return empty_state("No hay suficientes días de datos en este rango para calcular una proyección confiable.")

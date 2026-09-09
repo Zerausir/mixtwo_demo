@@ -1,7 +1,7 @@
 """
 services/queries.py — Consultas analíticas sobre el mart de ventas.
 
-Todas las funciones de contenido (KPIs, gráficos) aceptan los mismos cinco
+Todas las funciones de contenido (KPIs, gráficos) aceptan los mismos seis
 parámetros de filtro, para que la barra de filtros global (definida en
 app.py, persiste entre páginas) controle lo que se muestra en cualquier
 página del dashboard:
@@ -10,12 +10,16 @@ página del dashboard:
     marcas: list[str] | None       -- None o [] = todas
     lineas: list[str] | None       -- None o [] = todas
     fecha_ini, fecha_fin: str "YYYY-MM-DD" | None
+    umbral_mayorista: int | None   -- None = no excluir ninguna cuenta
 
 `MATRIZ` se excluye SIEMPRE de las opciones de sucursal y de los datos --
 no es un punto de venta al público (ver EDA, Sección 10). `SIN IDENTIFICAR`
-se excluye de las opciones de marca (no es útil para un usuario de negocio
-filtrar por "sin identificar"), pero esas filas se siguen sumando en los
-totales cuando no hay un filtro de marca activo.
+se excluye de las opciones de marca. `umbral_mayorista` excluye del cálculo
+cualquier IDENTIFICACION con más de N órdenes distintas EN EL RANGO DE
+FECHA seleccionado -- deliberadamente independiente de sucursal/marca/línea
+(ver instrucciones del proyecto, Sección 2.2): el estatus de "mayorista" de
+un cliente no debería cambiar solo porque el usuario está mirando una
+marca distinta.
 """
 from __future__ import annotations
 
@@ -25,13 +29,46 @@ from services.database import get_connection
 
 MARCA_EXCLUIDA_DE_OPCIONES = "SIN IDENTIFICAR"
 SUCURSAL_EXCLUIDA = "MATRIZ"
+IDENTIFICACION_GENERICA = "CONSUMIDOR FINAL"  # FORMATO_ID, no la identificación en sí
 
 
-def _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, alias=""):
+def _subquery_mayoristas(fecha_ini, fecha_fin, umbral):
+    """
+    Subconsulta que resuelve a la lista de IDENTIFICACION con más de
+    `umbral` órdenes distintas dentro del rango de fecha -- SIN filtrar por
+    sucursal/marca/línea, a propósito (ver docstring del módulo). El
+    "CONSUMIDOR FINAL" genérico se excluye de esta detección: es un mismo
+    código compartido por miles de compradores de mostrador distintos, no
+    un cliente identificable -- su conteo de órdenes no significa nada a
+    nivel individual.
+    """
+    condiciones = ["SUCURSAL != ?", "FORMATO_ID != ?"]
+    params: list = [SUCURSAL_EXCLUIDA, IDENTIFICACION_GENERICA]
+    if fecha_ini:
+        condiciones.append("DATE(FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append("DATE(FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+    where = " AND ".join(condiciones)
+    sql = (
+        f"SELECT IDENTIFICACION FROM ventas WHERE {where} "
+        f"GROUP BY IDENTIFICACION HAVING COUNT(DISTINCT ORDEN_ID) > ?"
+    )
+    params.append(umbral)
+    return sql, params
+
+
+def _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None, alias=""):
     """Construye la cláusula WHERE + parámetros a partir de los filtros globales."""
     pref = f"{alias}." if alias else ""
     condiciones = [f"{pref}SUCURSAL != ?"]
     params: list = [SUCURSAL_EXCLUIDA]
+
+    if umbral_mayorista is not None:
+        sub_sql, sub_params = _subquery_mayoristas(fecha_ini, fecha_fin, umbral_mayorista)
+        condiciones.append(f"{pref}IDENTIFICACION NOT IN ({sub_sql})")
+        params.extend(sub_params)
 
     if sucursales:
         condiciones.append(f"{pref}SUCURSAL IN ({','.join('?' * len(sucursales))})")
@@ -59,27 +96,28 @@ def rango_fechas_disponible() -> tuple[str, str]:
     return fila["min_f"], fila["max_f"]
 
 
-def opciones_cascada(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin) -> dict:
+def opciones_cascada(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin, umbral_mayorista=None) -> dict:
     """
     Para cada filtro, calcula qué opciones siguen teniendo datos DADAS las
-    selecciones ACTUALES de los otros dos filtros + fecha -- esto es lo que
-    hace que los selectores se actualicen en cascada. Cada lista se calcula
-    ignorando su propio filtro (para no auto-restringirse a lo ya elegido).
+    selecciones ACTUALES de los otros dos filtros + fecha + umbral de
+    mayoristas -- esto es lo que hace que los selectores se actualicen en
+    cascada. Cada lista se calcula ignorando su propio filtro (para no
+    auto-restringirse a lo ya elegido).
     """
     con = get_connection()
 
-    where_para_sucursal, params_s = _where_clause(None, marcas_sel, lineas_sel, fecha_ini, fecha_fin)
+    where_para_sucursal, params_s = _where_clause(None, marcas_sel, lineas_sel, fecha_ini, fecha_fin, umbral_mayorista)
     sucursales = pd.read_sql(
         f"SELECT DISTINCT SUCURSAL FROM ventas {where_para_sucursal} ORDER BY 1", con, params=params_s
     )["SUCURSAL"].tolist()
 
-    where_para_marca, params_m = _where_clause(sucursales_sel, None, lineas_sel, fecha_ini, fecha_fin)
+    where_para_marca, params_m = _where_clause(sucursales_sel, None, lineas_sel, fecha_ini, fecha_fin, umbral_mayorista)
     marcas = pd.read_sql(
         f"SELECT DISTINCT MARCA FROM ventas {where_para_marca} AND MARCA != ? ORDER BY 1",
         con, params=params_m + [MARCA_EXCLUIDA_DE_OPCIONES],
     )["MARCA"].tolist()
 
-    where_para_linea, params_l = _where_clause(sucursales_sel, marcas_sel, None, fecha_ini, fecha_fin)
+    where_para_linea, params_l = _where_clause(sucursales_sel, marcas_sel, None, fecha_ini, fecha_fin, umbral_mayorista)
     lineas = pd.read_sql(
         f"SELECT DISTINCT LINEA_PRODUCTO FROM ventas {where_para_linea} ORDER BY 1", con, params=params_l
     )["LINEA_PRODUCTO"].tolist()
@@ -88,17 +126,17 @@ def opciones_cascada(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fi
     return {"sucursales": sucursales, "marcas": marcas, "lineas": lineas}
 
 
-def hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> bool:
+def hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> bool:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     n = pd.read_sql(f"SELECT COUNT(*) AS n FROM ventas {where}", con, params=params).iloc[0]["n"]
     con.close()
     return n > 0
 
 
-def resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> dict:
+def resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> dict:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
 
     ordenes = pd.read_sql(
         f"SELECT ORDEN_ID, SUM(PRECIO_FINAL) AS valor_orden FROM ventas {where} GROUP BY ORDEN_ID",
@@ -123,9 +161,9 @@ def resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> dict:
     }
 
 
-def distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
+def distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"SELECT ORDEN_ID, SUM(PRECIO_FINAL) AS valor_orden FROM ventas {where} GROUP BY ORDEN_ID",
         con, params=params,
@@ -134,9 +172,9 @@ def distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.
     return df
 
 
-def ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
+def ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     diario = pd.read_sql(
         f"""SELECT strftime('%Y-%m', FECHA) AS mes, DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas_dia
             FROM ventas {where} GROUP BY mes, dia""",
@@ -155,9 +193,9 @@ def ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> 
     return resumen
 
 
-def ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
+def ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY dia", con,
                      params=params)
     con.close()
@@ -170,9 +208,9 @@ def ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin) -> p
     return resumen.reset_index().rename(columns={"index": "dia_semana", "ventas": "venta_promedio"})
 
 
-def ventas_por_linea(sucursales, marcas, fecha_ini, fecha_fin) -> pd.DataFrame:
+def ventas_por_linea(sucursales, marcas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, None, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, None, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"SELECT LINEA_PRODUCTO AS linea, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades FROM ventas {where} GROUP BY linea ORDER BY ventas DESC",
         con, params=params,
@@ -183,9 +221,9 @@ def ventas_por_linea(sucursales, marcas, fecha_ini, fecha_fin) -> pd.DataFrame:
     return df
 
 
-def ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin, top_n: int = 12) -> pd.DataFrame:
+def ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin, umbral_mayorista=None, top_n: int = 12) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(sucursales, None, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, None, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"SELECT MARCA AS marca, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades FROM ventas {where} AND MARCA != ? GROUP BY marca ORDER BY ventas DESC LIMIT ?",
         con, params=params + [MARCA_EXCLUIDA_DE_OPCIONES, top_n],
@@ -194,9 +232,9 @@ def ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin, top_n: int = 12) 
     return df
 
 
-def ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
+def ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(None, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(None, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"""SELECT SUCURSAL AS sucursal, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades,
                    COUNT(DISTINCT ORDEN_ID) AS ordenes
@@ -207,9 +245,9 @@ def ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin) -> pd.DataFrame:
     return df
 
 
-def mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin) -> pd.DataFrame:
+def mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(None, marcas, None, fecha_ini, fecha_fin)
+    where, params = _where_clause(None, marcas, None, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"SELECT SUCURSAL AS sucursal, LINEA_PRODUCTO AS linea, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY sucursal, linea",
         con, params=params,
@@ -221,9 +259,10 @@ def mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin) -> pd.DataFrame:
     return (tabla.div(tabla.sum(axis=1), axis=0) * 100).round(1)
 
 
-def explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, limite: int = 500) -> pd.DataFrame:
+def explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None,
+                    limite: int = 500) -> pd.DataFrame:
     con = get_connection()
-    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"""SELECT DATE(FECHA) AS fecha, ORDEN_ID AS orden, SUCURSAL AS sucursal, MARCA AS marca,
                    LINEA_PRODUCTO AS linea, PRODUCTO AS producto, CANTIDAD AS cantidad, PRECIO_FINAL AS precio_final
@@ -234,15 +273,20 @@ def explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, limite: in
     return df
 
 
-def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, semanas_backtest: int = 4) -> dict:
+def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=None, semanas_backtest: int = 4) -> dict:
     """
     Pronóstico baseline (promedio estacional por día de semana), filtrable
-    solo por sucursal y fecha -- NO por marca/línea. El EDA (Sección 8.6)
-    solo validó ausencia de intermitencia a nivel de sucursal; combinar con
-    marca/línea implicaría mostrar un modelo nunca respaldado por backtest.
+    solo por sucursal, fecha y umbral de mayoristas -- NO por marca/línea.
+    El EDA (Sección 8.6) solo validó ausencia de intermitencia a nivel de
+    sucursal; combinar con marca/línea implicaría mostrar un modelo nunca
+    respaldado por backtest. Respeta el mismo control global de mayoristas
+    que el resto de páginas (activo por defecto, umbral=15): una orden
+    mayorista de 20+ unidades en un solo día no es el patrón de demanda
+    retail que el modelo intenta capturar, y puede distorsionar el
+    promedio de ese día de la semana si no se excluye.
     """
     con = get_connection()
-    where, params = _where_clause(sucursales, None, None, fecha_ini, fecha_fin)
+    where, params = _where_clause(sucursales, None, None, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY dia ORDER BY dia", con,
         params=params)
@@ -277,4 +321,71 @@ def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, semanas_backtest: i
         "backtest": prueba[["dia", "ventas", "prediccion"]],
         "forecast": forecast[["dia", "prediccion"]],
         "mape_pct": mape,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Detección de cuentas mayoristas -- página nueva "Cuentas mayoristas".
+# Deliberadamente sin filtro de sucursal/marca/línea: el objetivo es ver el
+# comportamiento del cliente en TODO el negocio, no en un recorte de él.
+# ---------------------------------------------------------------------------
+def ranking_clientes(fecha_ini, fecha_fin, limite: int = 40) -> pd.DataFrame:
+    """Clientes identificados (excluye 'consumidor final'), ordenados por
+    número de órdenes distintas -- la tabla de la página de detección."""
+    con = get_connection()
+    condiciones = ["SUCURSAL != ?", "FORMATO_ID != ?"]
+    params: list = [SUCURSAL_EXCLUIDA, IDENTIFICACION_GENERICA]
+    if fecha_ini:
+        condiciones.append("DATE(FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append("DATE(FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+    where = " AND ".join(condiciones)
+
+    df = pd.read_sql(
+        f"""SELECT IDENTIFICACION AS identificacion, CLIENTE AS cliente, FORMATO_ID AS formato,
+                   COUNT(DISTINCT ORDEN_ID) AS ordenes, SUM(PRECIO_FINAL) AS gasto_total
+            FROM ventas WHERE {where}
+            GROUP BY IDENTIFICACION, CLIENTE, FORMATO_ID
+            ORDER BY ordenes DESC LIMIT ?""",
+        con, params=params + [limite],
+    )
+    con.close()
+    df["ticket_promedio"] = (df["gasto_total"] / df["ordenes"]).round(2)
+    return df
+
+
+def resumen_mayoristas(fecha_ini, fecha_fin, umbral: int) -> dict:
+    """KPIs de cabecera para la página de detección: cuántas cuentas caen
+    sobre el umbral actual y qué porcentaje del negocio representan."""
+    con = get_connection()
+
+    condiciones = ["SUCURSAL != ?"]
+    params: list = [SUCURSAL_EXCLUIDA]
+    if fecha_ini:
+        condiciones.append("DATE(FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append("DATE(FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+    where = " AND ".join(condiciones)
+
+    total = pd.read_sql(f"SELECT SUM(PRECIO_FINAL) AS ventas FROM ventas WHERE {where}", con, params=params).iloc[0][
+                "ventas"] or 0.0
+
+    sub_sql, sub_params = _subquery_mayoristas(fecha_ini, fecha_fin, umbral)
+    mayoristas = pd.read_sql(
+        f"""SELECT COUNT(DISTINCT IDENTIFICACION) AS n_cuentas, SUM(PRECIO_FINAL) AS ventas_mayoristas
+            FROM ventas WHERE {where} AND IDENTIFICACION IN ({sub_sql})""",
+        con, params=params + sub_params,
+    ).iloc[0]
+    con.close()
+
+    ventas_mayoristas = float(mayoristas["ventas_mayoristas"] or 0)
+    return {
+        "n_cuentas": int(mayoristas["n_cuentas"] or 0),
+        "ventas_mayoristas": ventas_mayoristas,
+        "ventas_totales": float(total),
+        "porcentaje": (ventas_mayoristas / total * 100) if total else 0.0,
     }

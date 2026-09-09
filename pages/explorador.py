@@ -3,7 +3,7 @@ from __future__ import annotations
 import dash
 from dash import Input, Output, callback, dash_table, html
 
-from components.ui import empty_state, page_header
+from components.ui import empty_state, page_header, umbral_efectivo
 from services.queries import explorar_ventas, hay_datos, ventas_por_sucursal
 
 dash.register_page(__name__, path="/explorador", name="Explorador")
@@ -11,6 +11,7 @@ dash.register_page(__name__, path="/explorador", name="Explorador")
 FILTROS = [
     Input("filtro-sucursal", "value"), Input("filtro-marca", "value"), Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
 ]
 
 
@@ -26,12 +27,14 @@ def layout():
 
 
 @callback(Output("explorador-contenido", "children"), *FILTROS)
-def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin):
-    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin):
+def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+
+    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef):
         return empty_state()
 
-    df = explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin)
-    df_sucursal = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin)
+    df = explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    df_sucursal = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
     return [
         html.Div(className="table-card", children=[

@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_title_with_help, empty_state, page_header
+from components.ui import chart_title_with_help, empty_state, page_header, umbral_efectivo
 from services.queries import hay_datos, ventas_por_linea, ventas_por_marca
 
 dash.register_page(__name__, path="/marcas-lineas", name="Marcas y líneas")
@@ -13,6 +13,7 @@ FONT = dict(family="Inter, Segoe UI, Arial, sans-serif", size=12)
 FILTROS = [
     Input("filtro-sucursal", "value"), Input("filtro-marca", "value"), Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
 ]
 
 
@@ -51,12 +52,14 @@ def _fig_marca(df) -> go.Figure:
 
 
 @callback(Output("marcas-contenido", "children"), *FILTROS)
-def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin):
-    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin):
+def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+
+    if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef):
         return empty_state()
 
-    df_linea = ventas_por_linea(sucursales, marcas, fecha_ini, fecha_fin)
-    df_marca = ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin)
+    df_linea = ventas_por_linea(sucursales, marcas, fecha_ini, fecha_fin, umbral_ef)
+    df_marca = ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin, umbral_ef)
 
     return [
         html.Div(className="chart-card", children=[

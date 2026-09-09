@@ -109,6 +109,30 @@ def derivar_linea(categoria: str) -> str:
     return "Otros/Accesorios"
 
 
+# ---------------------------------------------------------------------------
+# Derivación de FORMATO_ID -- señal independiente para detectar cuentas
+# mayoristas/corporativas (ver EDA/instrucciones del proyecto, Sección 2.2):
+# el RUC ecuatoriano de empresa tiene 13 dígitos y termina en "001"; la
+# cédula de persona natural tiene 10 dígitos. El valor genérico
+# "9999999999999" es "consumidor final" (venta de mostrador sin registrar
+# comprador) -- no es ni empresa ni persona identificada.
+# ---------------------------------------------------------------------------
+IDENTIFICACION_GENERICA = "9999999999999"
+
+
+def derivar_formato_id(identificacion: str) -> str:
+    if not isinstance(identificacion, str):
+        identificacion = str(identificacion)
+    identificacion = identificacion.strip()
+    if identificacion == IDENTIFICACION_GENERICA:
+        return "CONSUMIDOR FINAL"
+    if len(identificacion) == 13 and identificacion.endswith("001"):
+        return "RUC (empresa)"
+    if len(identificacion) == 10:
+        return "CÉDULA (persona)"
+    return "OTRO FORMATO"
+
+
 def construir(csv_path: str, db_path: str) -> None:
     print(f"Leyendo {csv_path} ...")
     df = pd.read_csv(csv_path, encoding="cp1252", low_memory=False)
@@ -147,6 +171,11 @@ def construir(csv_path: str, db_path: str) -> None:
     # geo-demográfico (Nivel Macro) lo necesite.
     df["CIUDAD"] = df["CIUDAD"].astype(str).str.strip().str.upper()
 
+    # FORMATO_ID -- ver docstring arriba. IDENTIFICACIÓN se preserva tal
+    # cual (string) para no perder ceros a la izquierda de las cédulas.
+    df["IDENTIFICACIÓN"] = df["IDENTIFICACIÓN"].astype(str).str.strip()
+    df["FORMATO_ID"] = df["IDENTIFICACIÓN"].apply(derivar_formato_id)
+
     # --- ORDEN_ID: unidad real de "transacción" -------------------------
     # Cada fila del CSV es una LÍNEA de producto dentro de una factura, no
     # una transacción en sí. IMPORTANTE: FACTURERO + NÚMERO por sí solos
@@ -177,6 +206,7 @@ def construir(csv_path: str, db_path: str) -> None:
     # fuera del demo, no aportan a las vistas construidas).
     cols = [
         "FECHA", "ORDEN_ID", "SUCURSAL", "ES_PUNTO_VENTA", "CIUDAD", "VENDEDOR",
+        "IDENTIFICACIÓN", "CLIENTE", "FORMATO_ID",
         "CÓDIGO", "PRODUCTO", "CATEGORÍA", "MARCA", "LINEA_PRODUCTO", "CANTIDAD",
         "PRECIO FINAL", "COSTO TOTAL",
     ]
@@ -185,6 +215,7 @@ def construir(csv_path: str, db_path: str) -> None:
         "CATEGORÍA": "CATEGORIA",
         "PRECIO FINAL": "PRECIO_FINAL",
         "COSTO TOTAL": "COSTO_TOTAL",
+        "IDENTIFICACIÓN": "IDENTIFICACION",
     })
     ventas = ventas.dropna(subset=["FECHA"])
 
@@ -192,6 +223,8 @@ def construir(csv_path: str, db_path: str) -> None:
     print(f"Órdenes reales (ORDEN_ID únicos): {ventas['ORDEN_ID'].nunique():,}")
     print(f"Rango de fechas: {ventas['FECHA'].min().date()} a {ventas['FECHA'].max().date()}")
     print(f"Marca identificada en {(ventas['MARCA'] != 'SIN IDENTIFICAR').mean() * 100:.1f}% de las filas")
+    n_ruc = (ventas["FORMATO_ID"] == "RUC (empresa)").sum()
+    print(f"Líneas con identificación tipo RUC (empresa, candidatas a mayorista): {n_ruc:,}")
 
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(db_path)
@@ -200,6 +233,7 @@ def construir(csv_path: str, db_path: str) -> None:
     con.execute("CREATE INDEX idx_ventas_marca ON ventas(MARCA)")
     con.execute("CREATE INDEX idx_ventas_linea ON ventas(LINEA_PRODUCTO)")
     con.execute("CREATE INDEX idx_ventas_sucursal ON ventas(SUCURSAL)")
+    con.execute("CREATE INDEX idx_ventas_identificacion ON ventas(IDENTIFICACION)")
     con.commit()
     con.close()
     print(f"Base construida en {db_path}")

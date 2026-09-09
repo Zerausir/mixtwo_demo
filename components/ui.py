@@ -3,6 +3,22 @@ from __future__ import annotations
 from dash import html
 
 
+def umbral_efectivo(mayorista_activo, umbral):
+    """
+    Traduce los dos controles globales (checkbox + número) al valor que
+    esperan las funciones de services/queries.py: None si la exclusión
+    está desactivada o el número no es válido, o el entero del umbral si
+    está activa. Centralizado aquí para que las 6 páginas no repitan la
+    misma condición.
+    """
+    if mayorista_activo and "excluir" in mayorista_activo and umbral:
+        try:
+            return int(umbral)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def kpi_card(titulo: str, valor: str, subtitulo: str = "") -> html.Div:
     return html.Div(
         className="kpi-card",

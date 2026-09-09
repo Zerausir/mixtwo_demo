@@ -48,6 +48,7 @@ def navigation() -> html.Div:
                             dcc.Link("Resumen", href="/", className="nav-link"),
                             dcc.Link("Marcas y líneas", href="/marcas-lineas", className="nav-link"),
                             dcc.Link("Sucursales", href="/sucursales", className="nav-link"),
+                            dcc.Link("Cuentas mayoristas", href="/mayoristas", className="nav-link"),
                             dcc.Link("Predicción", href="/prediccion", className="nav-link"),
                             dcc.Link("Explorador", href="/explorador", className="nav-link"),
                         ],
@@ -96,6 +97,26 @@ def navigation() -> html.Div:
                             clearable=False,
                         ),
                     ]),
+                    html.Div(className="filter-group filter-group-mayorista", children=[
+                        html.Label("Cuentas mayoristas", className="filter-label"),
+                        html.Div(
+                            className="mayorista-control",
+                            children=[
+                                dcc.Checklist(
+                                    id="filtro-mayorista-activo",
+                                    options=[{"label": " Excluir si supera", "value": "excluir"}],
+                                    value=["excluir"],
+                                    className="mayorista-checkbox",
+                                ),
+                                dcc.Input(
+                                    id="filtro-mayorista-umbral",
+                                    type="number", min=1, step=1, value=15,
+                                    className="mayorista-input",
+                                ),
+                                html.Span("órdenes", className="mayorista-suffix"),
+                            ],
+                        ),
+                    ]),
                     html.Button("Limpiar filtros", id="filtro-limpiar", className="filter-reset", n_clicks=0),
                 ],
             ),
@@ -136,9 +157,12 @@ app.layout = serve_layout
     Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"),
     Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"),
+    Input("filtro-mayorista-umbral", "value"),
 )
-def actualizar_opciones_filtros(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin):
-    opciones = opciones_cascada(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin)
+def actualizar_opciones_filtros(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    umbral_efectivo = umbral if (mayorista_activo and "excluir" in mayorista_activo and umbral) else None
+    opciones = opciones_cascada(sucursales_sel, marcas_sel, lineas_sel, fecha_ini, fecha_fin, umbral_efectivo)
     return (
         [{"label": s.title(), "value": s} for s in opciones["sucursales"]],
         [{"label": m, "value": m} for m in opciones["marcas"]],
@@ -152,11 +176,13 @@ def actualizar_opciones_filtros(sucursales_sel, marcas_sel, lineas_sel, fecha_in
     Output("filtro-linea", "value"),
     Output("filtro-fechas", "start_date"),
     Output("filtro-fechas", "end_date"),
+    Output("filtro-mayorista-activo", "value"),
+    Output("filtro-mayorista-umbral", "value"),
     Input("filtro-limpiar", "n_clicks"),
     prevent_initial_call=True,
 )
 def limpiar_filtros(n_clicks):
-    return [], [], [], FECHA_MIN, FECHA_MAX
+    return [], [], [], FECHA_MIN, FECHA_MAX, ["excluir"], 15
 
 
 if __name__ == "__main__":

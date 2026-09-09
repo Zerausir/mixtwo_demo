@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_title_with_help, empty_state, page_header
+from components.ui import chart_title_with_help, empty_state, page_header, umbral_efectivo
 from services.queries import hay_datos, mix_linea_por_sucursal, ventas_por_sucursal
 
 dash.register_page(__name__, path="/sucursales", name="Sucursales")
@@ -13,6 +13,7 @@ FONT = dict(family="Inter, Segoe UI, Arial, sans-serif", size=12)
 FILTROS = [
     Input("filtro-marca", "value"), Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
 ]
 
 
@@ -41,12 +42,14 @@ def _fig_heatmap(tabla) -> go.Figure:
 
 
 @callback(Output("sucursales-contenido", "children"), *FILTROS)
-def actualizar(marcas, lineas, fecha_ini, fecha_fin):
-    if not hay_datos(None, marcas, lineas, fecha_ini, fecha_fin):
+def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+
+    if not hay_datos(None, marcas, lineas, fecha_ini, fecha_fin, umbral_ef):
         return empty_state()
 
-    mix = mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin)
-    resumen = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin)
+    mix = mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin, umbral_ef)
+    resumen = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
     return [
         html.Div(className="chart-card", children=[

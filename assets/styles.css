@@ -187,6 +187,54 @@ body {
     background: var(--blush-light);
 }
 
+/* Control global de umbral de mayoristas (checkbox + número) */
+.filter-group-mayorista {
+    min-width: 240px;
+}
+
+.mayorista-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: white;
+}
+
+.mayorista-checkbox {
+    font-size: 13px;
+    color: var(--ink);
+    white-space: nowrap;
+}
+
+.mayorista-checkbox input[type="checkbox"] {
+    accent-color: var(--rose-deep);
+    margin-right: 4px;
+}
+
+.mayorista-input {
+    width: 46px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 4px 6px;
+    font-family: var(--font-body);
+    font-size: 13px;
+    text-align: center;
+}
+
+.mayorista-input:focus {
+    outline: none;
+    border-color: var(--rose-deep);
+}
+
+.mayorista-suffix {
+    font-size: 12.5px;
+    color: var(--taupe);
+    white-space: nowrap;
+}
+
 /* Estilos para dcc.Dropdown (react-select) -- alineados a la identidad */
 .filter-group .Select-control, .filter-group .Select--multi .Select-control {
     border-radius: 8px !important;
