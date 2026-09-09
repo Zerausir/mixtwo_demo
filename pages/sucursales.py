@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_title_with_help, empty_state, page_header, umbral_efectivo
+from components.ui import chart_header, empty_state, page_header, umbral_efectivo
 from services.queries import hay_datos, mix_linea_por_sucursal, ventas_por_sucursal
 
 dash.register_page(__name__, path="/sucursales", name="Sucursales")
@@ -53,7 +53,7 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
 
     return [
         html.Div(className="chart-card", children=[
-            chart_title_with_help(
+            chart_header(
                 "Composición de ventas por línea, dentro de cada sucursal",
                 "Cada fila suma 100%. Muestra qué porcentaje de las ventas de esa tienda "
                 "corresponde a cada línea de producto — no el volumen total de la tienda.",

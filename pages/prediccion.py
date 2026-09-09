@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc, html
 
-from components.ui import chart_title_with_help, empty_state, page_header, umbral_efectivo
+from components.ui import chart_header, empty_state, page_header, umbral_efectivo
 from services.queries import pronostico_corto_plazo
 
 dash.register_page(__name__, path="/prediccion", name="Predicción")
@@ -87,7 +87,7 @@ def actualizar(sucursales, fecha_ini, fecha_fin, mayorista_activo, umbral):
             ]),
         ]),
         html.Div(className="chart-card", children=[
-            chart_title_with_help(
+            chart_header(
                 "¿Qué tan bien predice el modelo? (prueba con datos reales)",
                 "Se le ocultaron al modelo las últimas semanas antes de calcular esto, para probar "
                 "cómo se comporta con información que nunca vio — igual que se comportaría en el "
@@ -97,7 +97,7 @@ def actualizar(sucursales, fecha_ini, fecha_fin, mayorista_activo, umbral):
                       config={"displayModeBar": False}),
         ]),
         html.Div(className="chart-card", children=[
-            chart_title_with_help(
+            chart_header(
                 "Proyección de ventas — próximos 14 días",
                 "Estimación de ventas diarias para las próximas dos semanas, basada en el patrón "
                 "semanal histórico.",

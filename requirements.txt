@@ -4,3 +4,4 @@ python-dotenv==1.2.2
 Flask-Login==0.6.3
 bcrypt==5.0.0
 gunicorn==26.0.0
+plotly==7.0.0

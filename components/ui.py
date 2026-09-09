@@ -19,11 +19,14 @@ def umbral_efectivo(mayorista_activo, umbral):
     return None
 
 
-def kpi_card(titulo: str, valor: str, subtitulo: str = "") -> html.Div:
+def kpi_card(titulo: str, valor: str, subtitulo: str = "", ayuda: str = "") -> html.Div:
+    encabezado = [html.Span(titulo, className="kpi-title")]
+    if ayuda:
+        encabezado.append(help_icon(ayuda))
     return html.Div(
         className="kpi-card",
         children=[
-            html.Div(titulo, className="kpi-title"),
+            html.Div(encabezado, className="kpi-title-row"),
             html.Div(valor, className="kpi-value"),
             html.Div(subtitulo, className="kpi-subtitle") if subtitulo else None,
         ],
@@ -49,19 +52,38 @@ def page_header(titulo: str, descripcion: str = "") -> html.Div:
 
 
 def help_icon(texto: str) -> html.Span:
-    """Ícono '?' con tooltip al pasar el mouse -- explica un gráfico sin
-    que Iván tenga que estar presente para aclararlo en vivo."""
+    """Ícono '?' con tooltip al pasar el mouse -- para profundidad adicional,
+    NO como único lugar donde vive la explicación (ver chart_header)."""
     return html.Span(
         className="help-icon",
         children=["?", html.Span(texto, className="tooltip-text")],
     )
 
 
-def chart_title_with_help(titulo: str, ayuda: str = "") -> html.Div:
+def chart_header(titulo: str, caption: str = "") -> html.Div:
+    """
+    Encabezado de gráfico con texto explicativo SIEMPRE VISIBLE debajo del
+    título (no un tooltip que depende de que alguien pase el mouse encima).
+    Un gerente viendo el panel sin que Iván esté presente para explicar en
+    vivo necesita esto legible de entrada, no descubrible por accidente --
+    mismo patrón que los subtítulos permanentes de OBTEL.
+    """
     hijos = [html.H3(titulo, className="chart-title")]
-    if ayuda:
-        hijos.append(help_icon(ayuda))
-    return html.Div(className="chart-title-row", children=hijos)
+    if caption:
+        hijos.append(html.P(caption, className="chart-caption"))
+    return html.Div(className="chart-header-block", children=hijos)
+
+
+def filtro_chip(etiqueta: str, valor: str, aplica: bool = True) -> html.Span:
+    """Un 'chip' de la barra de filtros activos -- igual al breadcrumb de
+    Power BI/OBTEL que muestra de un vistazo qué se está mirando, sin tener
+    que revisar cada selector de la barra de arriba."""
+    clase = "filter-chip" if aplica else "filter-chip filter-chip-inactive"
+    texto = valor if aplica else "No aplica en esta página"
+    return html.Span(
+        className=clase,
+        children=[html.Span(f"{etiqueta}: ", className="filter-chip-label"), texto],
+    )
 
 
 def empty_state(mensaje: str = "No hay datos para esta combinación de filtros.") -> html.Div:

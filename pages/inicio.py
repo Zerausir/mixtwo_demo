@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc, html
 
 from components.ui import (
-    chart_title_with_help,
+    chart_header,
     empty_state,
     formato_entero,
     formato_moneda,
@@ -60,11 +60,27 @@ def _fig_tendencia(df) -> go.Figure:
 
 
 def _fig_boxplot_ticket(df) -> go.Figure:
-    fig = go.Figure(go.Box(x=df["valor_orden"], marker_color="#9C4F5C", boxmean=True, name=""))
+    """
+    Ojo con esta función si se vuelve a tocar: la distribución de
+    valor_orden está muy sesgada a la derecha (mediana ~40, pero algunos
+    valores llegan a ~990). Sin capar el eje, la caja queda comprimida en
+    una franja angosta del gráfico y Plotly termina amontonando/rotando
+    las etiquetas de hover de la caja y los puntos atípicos por falta de
+    espacio -- efecto visible y confuso en pantalla. Se resuelve capando
+    el eje X a un rango razonable (P99) y quitando los puntos individuales
+    de atípicos (boxpoints=False): la caja igual muestra mediana/cuartiles/
+    bigotes con claridad, y el hover queda con una sola línea de texto.
+    """
+    limite_x = max(df["valor_orden"].quantile(0.99), 1)
+    fig = go.Figure(go.Box(
+        x=df["valor_orden"], marker_color="#9C4F5C", boxmean=True, name="",
+        boxpoints=False,
+        hovertemplate="Mediana y cuartiles del valor de orden<extra></extra>",
+    ))
     fig.update_layout(margin=dict(l=20, r=20, t=20, b=40), height=190,
                       plot_bgcolor="white", paper_bgcolor="white",
-                      xaxis_title="Valor de la orden (USD)", font=FONT,
-                      showlegend=False, yaxis=dict(showticklabels=False))
+                      xaxis=dict(title="Valor de la orden (USD)", range=[0, limite_x * 1.05]),
+                      font=FONT, showlegend=False, yaxis=dict(showticklabels=False))
     return fig
 
 
@@ -91,38 +107,49 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
     ticket = distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     dia_semana = ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
+    recorte_p99 = ticket["valor_orden"].quantile(0.99)
+    n_fuera_rango = int((ticket["valor_orden"] > recorte_p99).sum())
+
     return [
         html.Div(className="kpi-grid", children=[
-            kpi_card("Ventas totales", formato_moneda(resumen["ventas_totales"]), "Periodo y filtros seleccionados"),
-            kpi_card("Órdenes reales", formato_entero(resumen["ordenes"]), "Facturas, no líneas de producto"),
+            kpi_card("Ventas totales", formato_moneda(resumen["ventas_totales"]),
+                     "Periodo y filtros seleccionados",
+                     ayuda="Suma de PRECIO_FINAL de todas las órdenes que cumplen los filtros de arriba."),
+            kpi_card("Órdenes reales", formato_entero(resumen["ordenes"]),
+                     "Facturas, no líneas de producto",
+                     ayuda="Cada orden es una factura completa (puede tener varios productos). "
+                           "Una línea de producto no cuenta como orden aparte."),
             kpi_card("Ticket promedio", formato_moneda(resumen["ticket_promedio"]),
-                     f"Mediana: {formato_moneda(resumen['ticket_mediana'])}"),
+                     f"Mediana: {formato_moneda(resumen['ticket_mediana'])}",
+                     ayuda="El promedio puede verse alto por compras grandes puntuales -- la mediana "
+                           "representa mejor la compra típica."),
             kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"])),
         ]),
         html.Div(className="chart-card", children=[
-            chart_title_with_help(
+            chart_header(
                 "Venta promedio diaria por mes",
-                "Se usa el promedio por día, no la suma del mes completo, para que un mes con "
-                "menos días de datos no se vea como una caída de ventas. Las barras en color claro "
-                "marcadas 'Datos incompletos' tienen menos de 25 días de venta registrados dentro de "
-                "los filtros elegidos — puede ser porque el corte de la muestra ocurre a mitad de ese "
-                "mes, o porque la tienda/marca/línea filtrada no tuvo actividad todo el mes (por "
-                "ejemplo, una tienda que abrió a fin de mes). Compáralas con cuidado frente a las "
-                "demás.",
+                "Se usa el promedio por día, no la suma del mes completo, para que un mes con menos "
+                "días de datos no se vea como una caída de ventas. Las barras en color claro marcadas "
+                "'Datos incompletos' tienen menos de 25 días de venta registrados dentro de los "
+                "filtros elegidos -- puede ser porque el corte de la muestra ocurre a mitad de ese mes, "
+                "o porque la tienda/marca/línea filtrada no tuvo actividad todo el mes (por ejemplo, "
+                "una tienda que abrió a fin de mes). Compáralas con cuidado frente a las demás.",
             ),
             dcc.Graph(figure=_fig_tendencia(tendencia), config={"displayModeBar": False}),
         ]),
         html.Div(className="grid-2", children=[
             html.Div(className="chart-card", children=[
-                chart_title_with_help(
+                chart_header(
                     "Distribución del valor de orden",
-                    "Cada punto es una compra completa. La línea del medio (mediana) representa "
-                    "mejor la compra típica que el promedio, que compras grandes puntuales inflan.",
+                    "La caja muestra dónde están la mayoría de las compras (mediana y cuartiles); "
+                    "la línea punteada es el promedio. El eje se recorta en el percentil 99"
+                    + (f" -- quedan {n_fuera_rango} órdenes grandes fuera de este rango, revísalas en "
+                       "Explorador si te interesan." if n_fuera_rango else "."),
                 ),
                 dcc.Graph(figure=_fig_boxplot_ticket(ticket), config={"displayModeBar": False}),
             ]),
             html.Div(className="chart-card", children=[
-                chart_title_with_help(
+                chart_header(
                     "Venta promedio por día de la semana",
                     "Promedio histórico de ventas para cada día. Útil para planear personal y "
                     "reposición: los días más altos necesitan más preparación.",

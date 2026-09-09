@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_title_with_help, empty_state, page_header, umbral_efectivo
+from components.ui import chart_header, empty_state, page_header, umbral_efectivo
 from services.queries import hay_datos, ventas_por_linea, ventas_por_marca
 
 dash.register_page(__name__, path="/marcas-lineas", name="Marcas y líneas")
@@ -63,7 +63,7 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
 
     return [
         html.Div(className="chart-card", children=[
-            chart_title_with_help(
+            chart_header(
                 "Peso por línea de producto",
                 "Porcentaje del total de ventas que corresponde a cada línea (íntimo, playa, "
                 "homewear, etc.), dentro de los filtros seleccionados.",
@@ -71,7 +71,7 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
             dcc.Graph(figure=_fig_linea(df_linea), config={"displayModeBar": False}),
         ]),
         html.Div(className="chart-card", children=[
-            chart_title_with_help(
+            chart_header(
                 "Ventas por marca",
                 "Solo se muestran líneas de producto donde la marca pudo identificarse "
                 "automáticamente por el código.",

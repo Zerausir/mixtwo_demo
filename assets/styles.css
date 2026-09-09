@@ -235,6 +235,54 @@ body {
     white-space: nowrap;
 }
 
+/* Dropdown deshabilitado (filtro que no aplica en la página actual) --
+   apagado visualmente, no solo inerte, para que sea obvio de un vistazo. */
+.filter-group .is-disabled > .Select-control {
+    background: #F5F2F1 !important;
+    cursor: not-allowed !important;
+    opacity: 0.55;
+}
+
+.filter-group .is-disabled .Select-placeholder,
+.filter-group .is-disabled .Select-value-label {
+    color: var(--taupe) !important;
+}
+
+/* Barra de "filtros activos" (breadcrumb estilo Power BI/OBTEL) */
+.filtros-activos-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 0 28px 14px 28px;
+}
+
+.filter-chip {
+    display: inline-flex;
+    align-items: center;
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: var(--ink);
+    white-space: nowrap;
+}
+
+.filter-chip-label {
+    font-weight: 600;
+    color: var(--rose-deep);
+}
+
+.filter-chip-inactive {
+    background: #F5F2F1;
+    color: var(--taupe);
+    border-style: dashed;
+}
+
+.filter-chip-inactive .filter-chip-label {
+    color: var(--taupe);
+}
+
 /* Estilos para dcc.Dropdown (react-select) -- alineados a la identidad */
 .filter-group .Select-control, .filter-group .Select--multi .Select-control {
     border-radius: 8px !important;
@@ -348,10 +396,16 @@ body {
     position: relative;
 }
 
+.kpi-title-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
 .kpi-title {
     font-size: 12px;
     color: var(--taupe);
-    margin-bottom: 8px;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     font-weight: 600;
@@ -387,12 +441,24 @@ body {
     margin-bottom: 4px;
 }
 
+.chart-header-block {
+    margin-bottom: 14px;
+}
+
 .chart-title {
     font-family: var(--font-display);
     font-size: 16px;
     font-weight: 700;
     margin: 0;
     color: var(--ink);
+}
+
+.chart-caption {
+    font-size: 12.5px;
+    color: var(--taupe);
+    margin: 6px 0 0 0;
+    line-height: 1.5;
+    max-width: 640px;
 }
 
 .chart-note {

@@ -5,6 +5,7 @@ from dash import Dash, Input, Output, callback, dcc, html
 from flask_login import current_user
 
 from auth import init_auth
+from components.ui import filtro_chip
 from config import settings
 from services.queries import opciones_cascada, rango_fechas_disponible
 
@@ -23,12 +24,28 @@ init_auth(server)
 
 FECHA_MIN, FECHA_MAX = rango_fechas_disponible()
 
+# ---------------------------------------------------------------------------
+# Qué filtro aplica en cada página -- controla tanto si el dropdown queda
+# deshabilitado (visualmente apagado, no solo un texto que alguien podría no
+# leer) como qué dice su chip en la barra de "filtros activos". Página no
+# listada = todos aplican (fallback seguro).
+# ---------------------------------------------------------------------------
+FILTROS_POR_PAGINA = {
+    "/": {"sucursal": True, "marca": True, "linea": True},
+    "/marcas-lineas": {"sucursal": True, "marca": True, "linea": True},
+    "/sucursales": {"sucursal": False, "marca": True, "linea": True},
+    "/mayoristas": {"sucursal": False, "marca": False, "linea": False},
+    "/prediccion": {"sucursal": True, "marca": False, "linea": False},
+    "/explorador": {"sucursal": True, "marca": True, "linea": True},
+}
+
 
 def navigation() -> html.Div:
     usuario_actual = current_user.username if current_user.is_authenticated else ""
     return html.Div(
         className="topbar",
         children=[
+            dcc.Location(id="url-actual", refresh=False),
             html.Div(
                 className="topbar-row1",
                 children=[
@@ -120,6 +137,7 @@ def navigation() -> html.Div:
                     html.Button("Limpiar filtros", id="filtro-limpiar", className="filter-reset", n_clicks=0),
                 ],
             ),
+            html.Div(id="filtros-activos", className="filtros-activos-bar"),
         ],
     )
 
@@ -183,6 +201,58 @@ def actualizar_opciones_filtros(sucursales_sel, marcas_sel, lineas_sel, fecha_in
 )
 def limpiar_filtros(n_clicks):
     return [], [], [], FECHA_MIN, FECHA_MAX, ["excluir"], 15
+
+
+# ---------------------------------------------------------------------------
+# Filtros deshabilitados por página: un dropdown que no afecta nada en la
+# página actual se apaga visualmente (opacidad + cursor bloqueado, ver CSS),
+# en vez de quedar activo sin hacer nada -- eso es lo que hacía parecer el
+# panel "no profesional": un control que responde al clic pero no cambia
+# ningún número es peor que uno claramente apagado.
+# ---------------------------------------------------------------------------
+@callback(
+    Output("filtro-sucursal", "disabled"),
+    Output("filtro-marca", "disabled"),
+    Output("filtro-linea", "disabled"),
+    Input("url-actual", "pathname"),
+)
+def actualizar_filtros_deshabilitados(pathname):
+    aplica = FILTROS_POR_PAGINA.get(pathname, {"sucursal": True, "marca": True, "linea": True})
+    return not aplica["sucursal"], not aplica["marca"], not aplica["linea"]
+
+
+def _etiqueta_lista(valores) -> str:
+    if not valores:
+        return "Todas"
+    if len(valores) <= 2:
+        return ", ".join(valores)
+    return f"{len(valores)} seleccionadas"
+
+
+@callback(
+    Output("filtros-activos", "children"),
+    Input("url-actual", "pathname"),
+    Input("filtro-sucursal", "value"),
+    Input("filtro-marca", "value"),
+    Input("filtro-linea", "value"),
+    Input("filtro-fechas", "start_date"),
+    Input("filtro-fechas", "end_date"),
+    Input("filtro-mayorista-activo", "value"),
+    Input("filtro-mayorista-umbral", "value"),
+)
+def actualizar_chips_filtros(pathname, sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
+    aplica = FILTROS_POR_PAGINA.get(pathname, {"sucursal": True, "marca": True, "linea": True})
+
+    mayorista_texto = f"Excluidas si superan {umbral} órdenes" if (
+                mayorista_activo and "excluir" in mayorista_activo and umbral) else "Incluidas (sin excluir)"
+
+    return [
+        filtro_chip("Sucursal", _etiqueta_lista(sucursales), aplica["sucursal"]),
+        filtro_chip("Marca", _etiqueta_lista(marcas), aplica["marca"]),
+        filtro_chip("Línea", _etiqueta_lista(lineas), aplica["linea"]),
+        filtro_chip("Fechas", f"{fecha_ini} → {fecha_fin}"),
+        filtro_chip("Cuentas mayoristas", mayorista_texto),
+    ]
 
 
 if __name__ == "__main__":
