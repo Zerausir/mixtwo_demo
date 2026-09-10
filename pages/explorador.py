@@ -38,6 +38,13 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
     total_ventas = df_sucursal["ventas"].sum()
     df_sucursal["% del total"] = (df_sucursal["ventas"] / total_ventas * 100).round(1) if total_ventas else 0
 
+    columnas_resumen = {
+        "sucursal": "Sucursal", "ventas": "Ventas (USD)", "unidades": "Unidades",
+        "ordenes": "Órdenes", "% del total": "% del total",
+        "ultima_venta": "Última venta", "dias_desde_ultima_venta": "Días sin vender",
+    }
+    df_sucursal_mostrar = df_sucursal[list(columnas_resumen.keys())].rename(columns=columnas_resumen)
+
     return [
         html.Div(className="table-card", children=[
             html.H3(f"Líneas de producto ({len(df)} de máx. 500 mostradas)", className="chart-title"),
@@ -53,11 +60,19 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
         html.Div(className="table-card", children=[
             html.H3("Resumen por sucursal", className="chart-title"),
             dash_table.DataTable(
-                data=df_sucursal.round(2).to_dict("records"),
-                columns=[{"name": c, "id": c} for c in df_sucursal.columns],
+                data=df_sucursal_mostrar.round(2).to_dict("records"),
+                columns=[{"name": c, "id": c} for c in df_sucursal_mostrar.columns],
                 style_as_list_view=True,
                 style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
                 style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                style_data_conditional=[
+                    {
+                        "if": {"filter_query": "{Días sin vender} > 14"},
+                        "backgroundColor": "#FBEAEA",
+                        "color": "#8B2E2E",
+                        "fontWeight": "600",
+                    }
+                ],
                 page_size=10,
             ),
         ]),

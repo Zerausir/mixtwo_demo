@@ -52,8 +52,31 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
     resumen = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     total_ventas = resumen["ventas"].sum()
     resumen["% del total"] = (resumen["ventas"] / total_ventas * 100).round(1) if total_ventas else 0
+    resumen["inactiva"] = resumen["dias_desde_ultima_venta"] > 14
 
-    return [
+    contenido = []
+
+    inactivas = resumen[resumen["inactiva"]]
+    if not inactivas.empty:
+        detalle = "; ".join(
+            f"{row['sucursal'].title()} (última venta: {row['ultima_venta']}, "
+            f"hace {row['dias_desde_ultima_venta']} días)"
+            for _, row in inactivas.iterrows()
+        )
+        contenido.append(html.Div(className="note-box critical", children=[
+            html.Strong("⚠ Sucursales sin actividad reciente: "),
+            f"{detalle}. No es un problema de esta página -- son ventas que realmente dejaron de "
+            "registrarse. Vale la pena confirmar si estos puntos de venta siguen operando.",
+        ]))
+
+    columnas_tabla = {
+        "sucursal": "Sucursal", "ventas": "Ventas (USD)", "unidades": "Unidades",
+        "ordenes": "Órdenes", "% del total": "% del total",
+        "ultima_venta": "Última venta", "dias_desde_ultima_venta": "Días sin vender",
+    }
+    tabla_mostrar = resumen[list(columnas_tabla.keys())].rename(columns=columnas_tabla)
+
+    contenido += [
         html.Div(className="chart-card", children=[
             chart_header(
                 "Composición de ventas por línea, dentro de cada sucursal",
@@ -68,13 +91,22 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
         html.Div(className="table-card", children=[
             html.H3("Resumen por sucursal", className="chart-title"),
             dash_table.DataTable(
-                data=resumen.round(2).to_dict("records"),
-                columns=[{"name": c, "id": c} for c in resumen.columns],
+                data=tabla_mostrar.round(2).to_dict("records"),
+                columns=[{"name": c, "id": c} for c in tabla_mostrar.columns],
                 style_as_list_view=True,
                 style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
                 style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                style_data_conditional=[
+                    {
+                        "if": {"filter_query": "{Días sin vender} > 14"},
+                        "backgroundColor": "#FBEAEA",
+                        "color": "#8B2E2E",
+                        "fontWeight": "600",
+                    }
+                ],
                 sort_action="native",
                 page_size=10,
             ),
         ]),
     ]
+    return contenido

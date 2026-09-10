@@ -234,15 +234,35 @@ def ventas_por_marca(sucursales, lineas, fecha_ini, fecha_fin, umbral_mayorista=
 
 
 def ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
+    """
+    Incluye última venta y días de inactividad por sucursal -- hallazgo
+    real (PB Scala sin vender desde el 2 de febrero, Punto Blanco desde
+    el 16 de enero) que hasta ahora solo se veía si alguien filtraba esa
+    tienda específica en Predicción. Una tabla de resumen por sucursal sin
+    esto puede mostrar un número casi en cero sin ninguna explicación de
+    por qué -- se agrega aquí para que sea visible donde el gerente
+    naturalmente va a mirar primero (la tabla de todas las tiendas).
+    """
     con = get_connection()
     where, params = _where_clause(None, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
         f"""SELECT SUCURSAL AS sucursal, SUM(PRECIO_FINAL) AS ventas, SUM(CANTIDAD) AS unidades,
-                   COUNT(DISTINCT ORDEN_ID) AS ordenes
+                   COUNT(DISTINCT ORDEN_ID) AS ordenes, MAX(DATE(FECHA)) AS ultima_venta
             FROM ventas {where} GROUP BY sucursal ORDER BY ventas DESC""",
         con, params=params,
     )
     con.close()
+
+    if df.empty:
+        df["dias_desde_ultima_venta"] = []
+        return df
+
+    if fecha_fin:
+        fecha_referencia = pd.Timestamp(fecha_fin)
+    else:
+        fecha_referencia = pd.Timestamp(df["ultima_venta"].max())
+
+    df["dias_desde_ultima_venta"] = (fecha_referencia - pd.to_datetime(df["ultima_venta"])).dt.days
     return df
 
 
