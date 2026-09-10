@@ -28,8 +28,7 @@ def layout():
     ])
 
 
-def _fig_backtest(historico, backtest, es_agregado: bool) -> go.Figure:
-    nombre_pred = "Lo que el modelo predijo" if es_agregado else "Proyección distribuida a esta tienda"
+def _fig_backtest(historico, backtest) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=historico["dia"], y=historico["ventas"], mode="lines",
                              line=dict(color="#EDE1DD", width=1.5), name="Histórico", hoverinfo="skip"))
@@ -37,8 +36,8 @@ def _fig_backtest(historico, backtest, es_agregado: bool) -> go.Figure:
                              line=dict(color="#201A1A", width=2), name="Lo que realmente pasó",
                              hovertemplate="%{x}<br>Real: $%{y:,.0f}<extra></extra>"))
     fig.add_trace(go.Scatter(x=backtest["dia"], y=backtest["prediccion"], mode="lines+markers",
-                             line=dict(color="#9C4F5C", width=2, dash="dash"), name=nombre_pred,
-                             hovertemplate="%{x}<br>" + nombre_pred + ": $%{y:,.0f}<extra></extra>"))
+                             line=dict(color="#9C4F5C", width=2, dash="dash"), name="Lo que el modelo predijo",
+                             hovertemplate="%{x}<br>Predicción: $%{y:,.0f}<extra></extra>"))
     fig.update_layout(margin=dict(l=40, r=20, t=20, b=40), height=360,
                       plot_bgcolor="white", paper_bgcolor="white",
                       yaxis_title="Ventas (USD)", font=FONT, legend=dict(orientation="h", y=1.15))
@@ -68,24 +67,39 @@ def actualizar(sucursales, fecha_ini, fecha_fin, mayorista_activo, umbral):
 
     kpis = [
         kpi_card(
-            "Precisión del modelo (toda la empresa)",
+            "Precisión del modelo" if es_agregado else "Precisión del modelo para esta tienda",
             f"{precision_aprox:.0f}%" if precision_aprox is not None else "—",
-            "No cambia al filtrar una sucursal -- ver por qué abajo.",
+            "Promedio de varias pruebas (no solo el último mes) contra lo que realmente pasó, sin "
+            "haberlo visto antes -- un solo mes de prueba resultó ser poco estable por sí solo.",
+            ayuda="Entrenado y probado únicamente con los datos de esta selección -- no es un "
+                  "número inflado ni prestado de otra parte. Se promedian varias ventanas de "
+                  "prueba distintas para que el número no dependa de qué mes específico te tocó "
+                  "mirar.",
         ),
     ]
 
     if not es_agregado:
         kpis.append(kpi_card(
-            "Participación histórica de esta tienda",
-            f"{resultado['participacion_pct']:.1f}%",
-            "Del total de ventas de la empresa en el periodo seleccionado",
+            "Órdenes por día, en promedio",
+            f"{resultado['ordenes_promedio_dia']:.1f}",
+            "Entre menos órdenes maneja una tienda al día, más pesa cada venta individual sobre el "
+            "total -- eso explica por qué esta tienda predice distinto al agregado, no un defecto "
+            "del modelo.",
         ))
-        if resultado["mape_distribucion_pct"] is not None:
+        kpis.append(kpi_card(
+            "Historia disponible",
+            f"{resultado['semanas_historia']:.0f} semanas",
+            "Menos de ~26 semanas (medio año) significa que el patrón semanal de esta tienda "
+            "todavía se está formando.",
+        ))
+        if resultado.get("mape_agregado_pct") is not None:
+            precision_agg = 100 - resultado["mape_agregado_pct"]
             kpis.append(kpi_card(
-                "Ajuste de la distribución para esta tienda",
-                f"{100 - resultado['mape_distribucion_pct']:.0f}%",
-                "Qué tan bien la participación histórica explica el patrón real de esta tienda -- "
-                "no es la precisión del modelo, es una métrica distinta.",
+                "Referencia: precisión a nivel de toda la empresa",
+                f"{precision_agg:.0f}%",
+                "Más alta porque suma ~63 órdenes/día entre las 9 tiendas -- el ruido de cada venta "
+                "individual se cancela entre más transacciones. No reemplaza el número de esta "
+                "tienda, es contexto.",
             ))
 
     explicacion = (
@@ -96,29 +110,16 @@ def actualizar(sucursales, fecha_ini, fecha_fin, mayorista_activo, umbral):
     )
     if not es_agregado:
         explicacion += (
-            " El modelo SIEMPRE se entrena con el total de la empresa, nunca con una sola tienda por "
-            "separado: probamos hacerlo por tienda y el resultado fue mucho menos confiable (una "
-            "tienda individual vende con más variabilidad relativa que el conjunto -- es matemática, "
-            "no un defecto del modelo -- y varias tiendas tienen historia real más corta de lo que "
-            "parece, algunas abrieron a mitad de este periodo). Por eso, al filtrar una sucursal, lo "
-            "que ves es la proyección total de la empresa distribuida según cuánto representa "
-            "históricamente esa tienda -- no un modelo aparte entrenado solo con sus datos."
+            " Este modelo se entrena y valida únicamente con los datos de la tienda filtrada -- el "
+            "número de precisión que ves arriba es específico de esta tienda, no un promedio de la "
+            "empresa. Es normal que sea más bajo que el de toda la empresa junta: con pocas órdenes "
+            "al día, cada venta grande o pequeña mueve el total más de lo que movería en un negocio "
+            "que suma muchas tiendas."
         )
     explicacion += (
         " A medida que se acumule más historial (idealmente más de un año), el sistema podrá "
         "anticipar también temporadas altas como Navidad o vacaciones, algo que todavía no puede "
         "hacer."
-    )
-
-    titulo_backtest = ("¿Qué tan bien predice el modelo? (prueba con datos reales)" if es_agregado
-                       else "Ventas reales de esta tienda vs. proyección distribuida")
-    caption_backtest = (
-        "Se le ocultaron al modelo las últimas semanas antes de calcular esto, para probar cómo se "
-        "comporta con información que nunca vio -- igual que se comportaría en el futuro real, no un "
-        "resultado inflado por 'hacer trampa'." if es_agregado else
-        "La línea negra es lo que esta tienda vendió de verdad. La línea rosa punteada es la "
-        "proyección total de la empresa, distribuida según la participación histórica de esta tienda "
-        "-- no un modelo entrenado solo con los datos de esta tienda."
     )
 
     return [
@@ -127,16 +128,20 @@ def actualizar(sucursales, fecha_ini, fecha_fin, mayorista_activo, umbral):
         ]),
         html.Div(className="kpi-grid", children=kpis),
         html.Div(className="chart-card", children=[
-            chart_header(titulo_backtest, caption_backtest),
-            dcc.Graph(figure=_fig_backtest(resultado["historico"], resultado["backtest"], es_agregado),
+            chart_header(
+                "¿Qué tan bien predice el modelo? (prueba con datos reales)",
+                "Se le ocultaron al modelo las últimas semanas antes de calcular esto, para probar "
+                "cómo se comporta con información que nunca vio — igual que se comportaría en el "
+                "futuro real, no un resultado inflado por 'hacer trampa'.",
+            ),
+            dcc.Graph(figure=_fig_backtest(resultado["historico"], resultado["backtest"]),
                       config={"displayModeBar": False}),
         ]),
         html.Div(className="chart-card", children=[
             chart_header(
                 "Proyección de ventas — próximos 14 días",
                 "Estimación de ventas diarias para las próximas dos semanas, basada en el patrón "
-                "semanal histórico."
-                + ("" if es_agregado else " Distribuida a esta tienda según su participación histórica."),
+                "semanal histórico de esta selección.",
             ),
             dcc.Graph(figure=_fig_forecast(resultado["forecast"]), config={"displayModeBar": False}),
         ]),

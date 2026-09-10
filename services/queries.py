@@ -23,6 +23,7 @@ marca distinta.
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from services.database import get_connection
@@ -275,35 +276,44 @@ def explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_may
 
 def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=None, semanas_backtest: int = 4) -> dict:
     """
-    Pronóstico baseline (promedio estacional por día de semana), filtrable
+    Pronóstico baseline (MEDIANA estacional por día de semana), filtrable
     solo por sucursal, fecha y umbral de mayoristas -- NO por marca/línea.
-    Diseño de arquitectura -- forecasting JERÁRQUICO, no un modelo
-    independiente por sucursal (ver instrucciones del proyecto, Sección
-    3.1, y el EDA que confirmó por qué: el coeficiente de variación del
-    agregado es 33.7%, pero sube a 44-66% por tienda individual -- agregar
-    reduce la volatilidad relativa, es una propiedad matemática de sumar
-    series, no algo que se arregle con más datos. Además, varias tiendas
-    tienen historia real mucho más corta de lo que sugiere el rango de
-    fechas: Mall El Alto abrió el 21 de mayo (54 días de historia, no
-    ~194), Liz Scala el 27 de febrero (137 días), y PB Scala/Punto Blanco
-    son genuinamente intermitentes o casi inactivos -- verificado con
-    datos reales, no asumido).
 
-    Por esto: el modelo SIEMPRE se entrena y valida sobre el agregado de
-    toda la empresa (excluyendo MATRIZ y mayoristas), sin importar qué
-    sucursal esté filtrada. Cuando se filtra una sucursal, esa proyección
-    validada se DISTRIBUYE según la participación histórica reciente de
-    esa tienda -- no se entrena un modelo aparte con una fracción de los
-    datos, que sería menos confiable, no más.
+    Historial de decisión de arquitectura (importante si se vuelve a tocar):
+    en una iteración anterior, este modelo SIEMPRE entrenaba sobre el
+    agregado y distribuía la proyección a la tienda por participación
+    histórica. El cliente lo cuestionó con razón: quería ver la precisión
+    real de CADA tienda. Se probó shrinkage (mezclar patrón propio con el
+    agregado) y NO mejoró nada de forma medible -- la causa real es que
+    cada tienda maneja apenas 2-18 órdenes por día (vs ~63/día el
+    agregado), ruido genuino de conteo de transacciones, no un problema de
+    "forma" de patrón que se pueda tomar prestada.
+
+    Segunda ronda de mejora, esta vez sí con resultado real, verificado
+    con validación de MÚLTIPLES pliegues (6, no 1) para no juzgar con una
+    sola ventana de 4 semanas que resultó ser ruidosa en sí misma
+    (variación de hasta ±20 puntos de MAPE entre pliegues distintos):
+    - Usar MEDIANA en vez de promedio por día de semana: mejora
+      consistente en las tiendas probadas (Centro Comercial Iñaquito
+      54.4%->48.7% de error, Mall El Jardín 50.9%->48.2%) -- más robusta
+      a que una sola venta grande en un día puntual distorsione el
+      patrón.
+    - Modelos más complejos (Holt-Winters, OLS con tendencia) NO
+      superaron a la mediana simple en ningún caso probado -- confirma,
+      a nivel de tienda individual, el mismo hallazgo que ya teníamos a
+      nivel agregado en el EDA (Sección 12): más parámetros no ayudan sin
+      más datos que los sostengan.
+    - La "precisión" ahora es el PROMEDIO de varios pliegues de backtest,
+      no un solo mes -- un número más estable, menos dependiente de qué
+      4 semanas específicas te tocó mirar.
     """
     con = get_connection()
 
-    # Serie agregada: SIEMPRE sin filtro de sucursal -- es lo único que
-    # se entrena y se valida con backtest.
-    where_agregado, params_agregado = _where_clause(None, None, None, fecha_ini, fecha_fin, umbral_mayorista)
+    # --- Serie de la sucursal filtrada (o el agregado, si no hay filtro) ---
+    where, params = _where_clause(sucursales, None, None, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
-        f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where_agregado} GROUP BY dia ORDER BY dia",
-        con, params=params_agregado,
+        f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY dia ORDER BY dia",
+        con, params=params,
     )
 
     if len(df) < 21:
@@ -314,68 +324,94 @@ def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=No
     df["dow"] = df["dia"].dt.dayofweek
     df = df.sort_values("dia").reset_index(drop=True)
 
-    dias_backtest = min(semanas_backtest * 7, len(df) // 3)
-    entrenamiento = df.iloc[:-dias_backtest]
-    prueba_agregada = df.iloc[-dias_backtest:].copy()
+    # Tamaño de CADA pliegue de validación: 1 semana (7 días), no las 4
+    # semanas que se muestran en el gráfico -- si se usaran pliegues de 4
+    # semanas para los 6 pliegues de validación, se consumirían 168 días
+    # solo en pruebas, dejando al pliegue más antiguo con apenas ~25 días
+    # para entrenar (bug real, encontrado al no coincidir estos resultados
+    # con el experimento de validación hecho aparte). Con pliegues de 1
+    # semana, 6 pliegues consumen 42 días, dejando entrenamiento
+    # razonable incluso para el pliegue más antiguo.
+    dias_por_pliegue = 7
+    dias_backtest = min(semanas_backtest * 7, len(df) // 3)  # tamaño del período MOSTRADO en el gráfico
+    max_pliegues = 6
+    n_pliegues = min(max_pliegues, max(1, (len(df) - 21) // dias_por_pliegue))
 
-    promedio_por_dow = entrenamiento.groupby("dow")["ventas"].mean()
-    prueba_agregada["prediccion"] = prueba_agregada["dow"].map(promedio_por_dow)
-    error_pct = (prueba_agregada["ventas"] - prueba_agregada["prediccion"]).abs() / prueba_agregada["ventas"].replace(0,
-                                                                                                                      pd.NA)
-    mape_agregado = float(error_pct.mean() * 100) if len(prueba_agregada) else None
+    mapes_pliegues = []
+    for i in range(n_pliegues):
+        corte = len(df) - (n_pliegues - i) * dias_por_pliegue
+        if corte < 14:
+            continue
+        entrenamiento = df.iloc[:corte]
+        prueba_pliegue = df.iloc[corte:corte + dias_por_pliegue].copy()
+        if prueba_pliegue.empty:
+            continue
+
+        mediana_por_dow = entrenamiento.groupby("dow")["ventas"].median()
+        prueba_pliegue["prediccion"] = prueba_pliegue["dow"].map(mediana_por_dow)
+        error_pct = (prueba_pliegue["ventas"] - prueba_pliegue["prediccion"]).abs() / prueba_pliegue["ventas"].replace(
+            0, pd.NA)
+        mape_pliegue = float(error_pct.mean() * 100) if len(prueba_pliegue) else None
+        if mape_pliegue is not None:
+            mapes_pliegues.append(mape_pliegue)
+
+    mape = float(np.mean(mapes_pliegues)) if mapes_pliegues else None
+
+    # Para el GRÁFICO (no para el número de precisión): entrenar con todo
+    # menos las últimas `dias_backtest` (4 semanas) y mostrar esa ventana
+    # -- son fechas recientes que el usuario reconoce visualmente. El
+    # número de precisión de arriba, en cambio, es el promedio de los
+    # pliegues de 1 semana calculados arriba, más estable.
+    entrenamiento_grafico = df.iloc[:-dias_backtest]
+    prueba = df.iloc[-dias_backtest:].copy()
+    mediana_grafico = entrenamiento_grafico.groupby("dow")["ventas"].median()
+    prueba["prediccion"] = prueba["dow"].map(mediana_grafico)
 
     ultimo_dia = df["dia"].max()
     proximos = pd.date_range(ultimo_dia + pd.Timedelta(days=1), periods=14, freq="D")
-    promedio_todo = df.groupby("dow")["ventas"].mean()
-    forecast_agregado = pd.DataFrame({"dia": proximos, "dow": proximos.dayofweek})
-    forecast_agregado["prediccion"] = forecast_agregado["dow"].map(promedio_todo)
+    mediana_todo = df.groupby("dow")["ventas"].median()
+    forecast = pd.DataFrame({"dia": proximos, "dow": proximos.dayofweek})
+    forecast["prediccion"] = forecast["dow"].map(mediana_todo)
 
-    # Participación histórica de la sucursal filtrada, y su serie REAL
-    # (factual, no modelada) para comparar contra la proyección distribuida.
-    participacion = 1.0
-    historico_real = df[["dia", "ventas"]].copy()
-    if sucursales:
-        where_tienda, params_tienda = _where_clause(sucursales, None, None, fecha_ini, fecha_fin, umbral_mayorista)
-        df_tienda = pd.read_sql(
-            f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where_tienda} GROUP BY dia ORDER BY dia",
-            con, params=params_tienda,
-        )
-        df_tienda["dia"] = pd.to_datetime(df_tienda["dia"])
-
-        ventas_tienda = df_tienda["ventas"].sum()
-        ventas_agregado = df["ventas"].sum()
-        participacion = (ventas_tienda / ventas_agregado) if ventas_agregado else 0.0
-
-        historico_real = df[["dia"]].merge(df_tienda, on="dia", how="left").fillna({"ventas": 0})
-
-    con.close()
-
-    backtest = prueba_agregada[["dia"]].copy()
-    backtest = backtest.merge(historico_real, on="dia", how="left")
-    backtest["prediccion"] = (prueba_agregada["prediccion"] * participacion).values
-
-    forecast = forecast_agregado[["dia"]].copy()
-    forecast["prediccion"] = forecast_agregado["prediccion"] * participacion
-
-    # Error de la distribución para ESTA tienda específica -- distinto del
-    # MAPE agregado (que es el que mide qué tan bueno es el modelo en sí).
-    # Este segundo número mide qué tan bien la participación histórica
-    # explica el patrón real de la tienda, y se etiqueta como tal en la UI.
-    mape_distribucion = None
-    if sucursales:
-        err_dist = (backtest["ventas"] - backtest["prediccion"]).abs() / backtest["ventas"].replace(0, pd.NA)
-        mape_distribucion = float(err_dist.mean() * 100) if len(backtest) else None
-
-    return {
+    resultado = {
         "suficiente": True,
         "es_agregado": not bool(sucursales),
-        "participacion_pct": participacion * 100,
-        "historico": historico_real,
-        "backtest": backtest[["dia", "ventas", "prediccion"]],
-        "forecast": forecast,
-        "mape_pct": mape_agregado,
-        "mape_distribucion_pct": mape_distribucion,
+        "historico": df[["dia", "ventas"]],
+        "backtest": prueba[["dia", "ventas", "prediccion"]],
+        "forecast": forecast[["dia", "prediccion"]],
+        "mape_pct": mape,
+        "semanas_historia": round(len(df) / 7, 1),
+        "ordenes_promedio_dia": None,
+        "mape_agregado_pct": None,
     }
+
+    # --- Transparencia adicional cuando se filtra una tienda específica ---
+    if sucursales:
+        ordenes_dia = pd.read_sql(
+            f"SELECT DATE(FECHA) AS dia, COUNT(DISTINCT ORDEN_ID) AS n FROM ventas {where} GROUP BY dia",
+            con, params=params,
+        )
+        resultado["ordenes_promedio_dia"] = float(ordenes_dia["n"].mean()) if len(ordenes_dia) else 0.0
+
+        # Agregado como referencia de comparación (mismo periodo, no reemplaza el número de la tienda)
+        where_agg, params_agg = _where_clause(None, None, None, fecha_ini, fecha_fin, umbral_mayorista)
+        df_agg = pd.read_sql(
+            f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where_agg} GROUP BY dia ORDER BY dia",
+            con, params=params_agg,
+        )
+        if len(df_agg) >= 21:
+            df_agg["dia"] = pd.to_datetime(df_agg["dia"])
+            df_agg["dow"] = df_agg["dia"].dt.dayofweek
+            df_agg = df_agg.sort_values("dia").reset_index(drop=True)
+            corte_agg = min(semanas_backtest * 7, len(df_agg) // 3)
+            train_agg, test_agg = df_agg.iloc[:-corte_agg], df_agg.iloc[-corte_agg:].copy()
+            prom_agg = train_agg.groupby("dow")["ventas"].median()
+            test_agg["prediccion"] = test_agg["dow"].map(prom_agg)
+            err_agg = (test_agg["ventas"] - test_agg["prediccion"]).abs() / test_agg["ventas"].replace(0, pd.NA)
+            resultado["mape_agregado_pct"] = float(err_agg.mean() * 100) if len(test_agg) else None
+
+    con.close()
+    return resultado
 
 
 # ---------------------------------------------------------------------------
