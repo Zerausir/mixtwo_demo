@@ -277,22 +277,37 @@ def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=No
     """
     Pronóstico baseline (promedio estacional por día de semana), filtrable
     solo por sucursal, fecha y umbral de mayoristas -- NO por marca/línea.
-    El EDA (Sección 8.6) solo validó ausencia de intermitencia a nivel de
-    sucursal; combinar con marca/línea implicaría mostrar un modelo nunca
-    respaldado por backtest. Respeta el mismo control global de mayoristas
-    que el resto de páginas (activo por defecto, umbral=15): una orden
-    mayorista de 20+ unidades en un solo día no es el patrón de demanda
-    retail que el modelo intenta capturar, y puede distorsionar el
-    promedio de ese día de la semana si no se excluye.
+    Diseño de arquitectura -- forecasting JERÁRQUICO, no un modelo
+    independiente por sucursal (ver instrucciones del proyecto, Sección
+    3.1, y el EDA que confirmó por qué: el coeficiente de variación del
+    agregado es 33.7%, pero sube a 44-66% por tienda individual -- agregar
+    reduce la volatilidad relativa, es una propiedad matemática de sumar
+    series, no algo que se arregle con más datos. Además, varias tiendas
+    tienen historia real mucho más corta de lo que sugiere el rango de
+    fechas: Mall El Alto abrió el 21 de mayo (54 días de historia, no
+    ~194), Liz Scala el 27 de febrero (137 días), y PB Scala/Punto Blanco
+    son genuinamente intermitentes o casi inactivos -- verificado con
+    datos reales, no asumido).
+
+    Por esto: el modelo SIEMPRE se entrena y valida sobre el agregado de
+    toda la empresa (excluyendo MATRIZ y mayoristas), sin importar qué
+    sucursal esté filtrada. Cuando se filtra una sucursal, esa proyección
+    validada se DISTRIBUYE según la participación histórica reciente de
+    esa tienda -- no se entrena un modelo aparte con una fracción de los
+    datos, que sería menos confiable, no más.
     """
     con = get_connection()
-    where, params = _where_clause(sucursales, None, None, fecha_ini, fecha_fin, umbral_mayorista)
+
+    # Serie agregada: SIEMPRE sin filtro de sucursal -- es lo único que
+    # se entrena y se valida con backtest.
+    where_agregado, params_agregado = _where_clause(None, None, None, fecha_ini, fecha_fin, umbral_mayorista)
     df = pd.read_sql(
-        f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where} GROUP BY dia ORDER BY dia", con,
-        params=params)
-    con.close()
+        f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where_agregado} GROUP BY dia ORDER BY dia",
+        con, params=params_agregado,
+    )
 
     if len(df) < 21:
+        con.close()
         return {"suficiente": False}
 
     df["dia"] = pd.to_datetime(df["dia"])
@@ -301,26 +316,65 @@ def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=No
 
     dias_backtest = min(semanas_backtest * 7, len(df) // 3)
     entrenamiento = df.iloc[:-dias_backtest]
-    prueba = df.iloc[-dias_backtest:]
+    prueba_agregada = df.iloc[-dias_backtest:].copy()
 
     promedio_por_dow = entrenamiento.groupby("dow")["ventas"].mean()
-    prueba = prueba.copy()
-    prueba["prediccion"] = prueba["dow"].map(promedio_por_dow)
-    prueba["error_abs_pct"] = (prueba["ventas"] - prueba["prediccion"]).abs() / prueba["ventas"].replace(0, pd.NA)
-    mape = float(prueba["error_abs_pct"].mean() * 100) if len(prueba) else None
+    prueba_agregada["prediccion"] = prueba_agregada["dow"].map(promedio_por_dow)
+    error_pct = (prueba_agregada["ventas"] - prueba_agregada["prediccion"]).abs() / prueba_agregada["ventas"].replace(0,
+                                                                                                                      pd.NA)
+    mape_agregado = float(error_pct.mean() * 100) if len(prueba_agregada) else None
 
     ultimo_dia = df["dia"].max()
     proximos = pd.date_range(ultimo_dia + pd.Timedelta(days=1), periods=14, freq="D")
     promedio_todo = df.groupby("dow")["ventas"].mean()
-    forecast = pd.DataFrame({"dia": proximos, "dow": proximos.dayofweek})
-    forecast["prediccion"] = forecast["dow"].map(promedio_todo)
+    forecast_agregado = pd.DataFrame({"dia": proximos, "dow": proximos.dayofweek})
+    forecast_agregado["prediccion"] = forecast_agregado["dow"].map(promedio_todo)
+
+    # Participación histórica de la sucursal filtrada, y su serie REAL
+    # (factual, no modelada) para comparar contra la proyección distribuida.
+    participacion = 1.0
+    historico_real = df[["dia", "ventas"]].copy()
+    if sucursales:
+        where_tienda, params_tienda = _where_clause(sucursales, None, None, fecha_ini, fecha_fin, umbral_mayorista)
+        df_tienda = pd.read_sql(
+            f"SELECT DATE(FECHA) AS dia, SUM(PRECIO_FINAL) AS ventas FROM ventas {where_tienda} GROUP BY dia ORDER BY dia",
+            con, params=params_tienda,
+        )
+        df_tienda["dia"] = pd.to_datetime(df_tienda["dia"])
+
+        ventas_tienda = df_tienda["ventas"].sum()
+        ventas_agregado = df["ventas"].sum()
+        participacion = (ventas_tienda / ventas_agregado) if ventas_agregado else 0.0
+
+        historico_real = df[["dia"]].merge(df_tienda, on="dia", how="left").fillna({"ventas": 0})
+
+    con.close()
+
+    backtest = prueba_agregada[["dia"]].copy()
+    backtest = backtest.merge(historico_real, on="dia", how="left")
+    backtest["prediccion"] = (prueba_agregada["prediccion"] * participacion).values
+
+    forecast = forecast_agregado[["dia"]].copy()
+    forecast["prediccion"] = forecast_agregado["prediccion"] * participacion
+
+    # Error de la distribución para ESTA tienda específica -- distinto del
+    # MAPE agregado (que es el que mide qué tan bueno es el modelo en sí).
+    # Este segundo número mide qué tan bien la participación histórica
+    # explica el patrón real de la tienda, y se etiqueta como tal en la UI.
+    mape_distribucion = None
+    if sucursales:
+        err_dist = (backtest["ventas"] - backtest["prediccion"]).abs() / backtest["ventas"].replace(0, pd.NA)
+        mape_distribucion = float(err_dist.mean() * 100) if len(backtest) else None
 
     return {
         "suficiente": True,
-        "historico": df[["dia", "ventas"]],
-        "backtest": prueba[["dia", "ventas", "prediccion"]],
-        "forecast": forecast[["dia", "prediccion"]],
-        "mape_pct": mape,
+        "es_agregado": not bool(sucursales),
+        "participacion_pct": participacion * 100,
+        "historico": historico_real,
+        "backtest": backtest[["dia", "ventas", "prediccion"]],
+        "forecast": forecast,
+        "mape_pct": mape_agregado,
+        "mape_distribucion_pct": mape_distribucion,
     }
 
 
