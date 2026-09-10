@@ -608,6 +608,13 @@ body {
     margin-bottom: 20px;
 }
 
+.note-box.critical {
+    background: #FBEAEA;
+    border-color: #E8A9A9;
+    color: #8B2E2E;
+    margin-bottom: 20px;
+}
+
 /* ============ EMPTY STATE ============ */
 .empty-state {
     display: flex;

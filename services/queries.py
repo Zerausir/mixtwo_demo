@@ -367,8 +367,27 @@ def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=No
     mediana_grafico = entrenamiento_grafico.groupby("dow")["ventas"].median()
     prueba["prediccion"] = prueba["dow"].map(mediana_grafico)
 
-    ultimo_dia = df["dia"].max()
-    proximos = pd.date_range(ultimo_dia + pd.Timedelta(days=1), periods=14, freq="D")
+    ultimo_dia_tienda = df["dia"].max()
+
+    # --- Fecha de referencia para "próximos 14 días": el FINAL DEL RANGO
+    # GLOBAL filtrado (o el máximo real de todo el mart si no se especificó
+    # fecha_fin), NUNCA la última venta de la tienda individual. Bug real
+    # encontrado con PB Scala: su última venta fue el 2 de febrero (no
+    # vende desde entonces) -- anclar el forecast a esa fecha generaba una
+    # "proyección de próximos 14 días" para el 3-16 de febrero, mostrada
+    # como si fueran fechas futuras, cuando el resto del panel está mirando
+    # hasta julio. El anclaje correcto es el rango que el usuario está
+    # mirando, no el historial propio (posiblemente desactualizado) de
+    # cada tienda.
+    if fecha_fin:
+        fecha_referencia = pd.Timestamp(fecha_fin)
+    else:
+        ref_query = pd.read_sql("SELECT MAX(DATE(FECHA)) AS f FROM ventas WHERE SUCURSAL != 'MATRIZ'", con)
+        fecha_referencia = pd.Timestamp(ref_query.iloc[0]["f"])
+
+    dias_desde_ultima_venta = (fecha_referencia - ultimo_dia_tienda).days
+
+    proximos = pd.date_range(fecha_referencia + pd.Timedelta(days=1), periods=14, freq="D")
     mediana_todo = df.groupby("dow")["ventas"].median()
     forecast = pd.DataFrame({"dia": proximos, "dow": proximos.dayofweek})
     forecast["prediccion"] = forecast["dow"].map(mediana_todo)
@@ -381,6 +400,7 @@ def pronostico_corto_plazo(sucursales, fecha_ini, fecha_fin, umbral_mayorista=No
         "forecast": forecast[["dia", "prediccion"]],
         "mape_pct": mape,
         "semanas_historia": round(len(df) / 7, 1),
+        "dias_desde_ultima_venta": int(dias_desde_ultima_venta),
         "ordenes_promedio_dia": None,
         "mape_agregado_pct": None,
     }
