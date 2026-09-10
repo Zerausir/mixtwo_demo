@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_header, empty_state, page_header, umbral_efectivo
+from components.ui import con_carga, chart_header, empty_state, page_header, umbral_efectivo
 from services.queries import hay_datos, mix_linea_por_sucursal, ventas_por_sucursal
 
 dash.register_page(__name__, path="/sucursales", name="Sucursales")
@@ -25,7 +25,7 @@ def layout():
             "diferencias. El filtro de sucursal de arriba no aplica en esta página, ya que su "
             "propósito es comparar todas las tiendas entre sí.",
         ),
-        html.Div(id="sucursales-contenido"),
+        con_carga("carga-sucursales-contenido", html.Div(id="sucursales-contenido")),
     ])
 
 

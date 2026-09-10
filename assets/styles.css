@@ -419,6 +419,28 @@ body {
     line-height: 1;
 }
 
+.kpi-value-row {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.kpi-delta {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: var(--font-body);
+    white-space: nowrap;
+}
+
+.kpi-delta-up {
+    color: #2E7D4F;
+}
+
+.kpi-delta-down {
+    color: #B23B3B;
+}
+
 .kpi-subtitle {
     font-size: 12px;
     color: var(--taupe);

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dash import html
+from dash import dcc, html
 
 
 def umbral_efectivo(mayorista_activo, umbral):
@@ -19,15 +19,31 @@ def umbral_efectivo(mayorista_activo, umbral):
     return None
 
 
-def kpi_card(titulo: str, valor: str, subtitulo: str = "", ayuda: str = "") -> html.Div:
+def kpi_card(titulo: str, valor: str, subtitulo: str = "", ayuda: str = "", delta_pct: float | None = None) -> html.Div:
+    """
+    delta_pct: variación % vs. el periodo anterior (mismo largo de días,
+    inmediatamente antes del rango seleccionado). None = no se muestra
+    (ej. cuando no hay suficiente historia previa para comparar, o el KPI
+    no tiene un "antes" con el que compararse). Positivo = verde con ▲,
+    negativo = rojo con ▼ -- para que "¿esto es bueno o malo?" se
+    responda de un vistazo, sin que el usuario tenga que comparar
+    mentalmente contra el periodo anterior.
+    """
     encabezado = [html.Span(titulo, className="kpi-title")]
     if ayuda:
         encabezado.append(help_icon(ayuda))
+
+    valor_row = [html.Div(valor, className="kpi-value")]
+    if delta_pct is not None:
+        clase_delta = "kpi-delta kpi-delta-up" if delta_pct >= 0 else "kpi-delta kpi-delta-down"
+        flecha = "▲" if delta_pct >= 0 else "▼"
+        valor_row.append(html.Span(f"{flecha} {abs(delta_pct):.0f}%", className=clase_delta))
+
     return html.Div(
         className="kpi-card",
         children=[
             html.Div(encabezado, className="kpi-title-row"),
-            html.Div(valor, className="kpi-value"),
+            html.Div(valor_row, className="kpi-value-row"),
             html.Div(subtitulo, className="kpi-subtitle") if subtitulo else None,
         ],
     )
@@ -83,6 +99,22 @@ def filtro_chip(etiqueta: str, valor: str, aplica: bool = True) -> html.Span:
     return html.Span(
         className=clase,
         children=[html.Span(f"{etiqueta}: ", className="filter-chip-label"), texto],
+    )
+
+
+def con_carga(id_wrapper: str, children) -> dcc.Loading:
+    """
+    Envuelve el contenido de una página en un spinner de carga con los
+    colores de mixtwo -- pulido esperable en una herramienta que se
+    presenta como profesional (hoja de ruta original, nunca implementado
+    hasta ahora). `id_wrapper` debe ser único por página para que Dash no
+    confunda el estado de carga de una página con el de otra.
+    """
+    return dcc.Loading(
+        id=id_wrapper,
+        type="circle",
+        color="#9C4F5C",
+        children=children,
     )
 
 

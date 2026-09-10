@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc, html
 
-from components.ui import chart_header, empty_state, kpi_card, page_header, umbral_efectivo
+from components.ui import con_carga, chart_header, empty_state, kpi_card, page_header, umbral_efectivo
 from services.queries import pronostico_corto_plazo
 
 dash.register_page(__name__, path="/prediccion", name="Predicción")
@@ -28,7 +28,7 @@ def layout():
             "Esta página solo se filtra por sucursal y fecha (no por marca ni línea de producto) "
             "— es la combinación que se validó como confiable antes de mostrarla.",
         ),
-        html.Div(id="prediccion-contenido"),
+        con_carga("carga-prediccion-contenido", html.Div(id="prediccion-contenido")),
     ])
 
 

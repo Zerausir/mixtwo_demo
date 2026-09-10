@@ -162,6 +162,47 @@ def resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_may
     }
 
 
+def deltas_periodo_anterior(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> dict:
+    """
+    Variación % de cada KPI vs. el periodo INMEDIATAMENTE ANTERIOR, del
+    mismo largo en días -- para que los KPI de Resumen respondan "¿esto es
+    bueno o malo?" sin que el usuario tenga que comparar mentalmente
+    contra otro periodo (hoja de ruta original del proyecto, pendiente
+    desde el primer día).
+
+    Devuelve None en cada delta si no hay un fecha_ini/fecha_fin definido,
+    o si el periodo anterior no tiene ventas con qué comparar (división
+    por cero) -- en vez de mostrar un porcentaje engañoso.
+    """
+    sin_deltas = {"ventas_totales": None, "ordenes": None, "ticket_promedio": None, "unidades_totales": None}
+    if not fecha_ini or not fecha_fin:
+        return sin_deltas
+
+    inicio = pd.Timestamp(fecha_ini)
+    fin = pd.Timestamp(fecha_fin)
+    largo_dias = (fin - inicio).days + 1
+    fin_anterior = inicio - pd.Timedelta(days=1)
+    inicio_anterior = fin_anterior - pd.Timedelta(days=largo_dias - 1)
+
+    actual = resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
+    anterior = resumen_general(
+        sucursales, marcas, lineas, inicio_anterior.strftime("%Y-%m-%d"), fin_anterior.strftime("%Y-%m-%d"),
+        umbral_mayorista,
+    )
+
+    def _delta(actual_val, anterior_val):
+        if not anterior_val:
+            return None
+        return (actual_val - anterior_val) / anterior_val * 100
+
+    return {
+        "ventas_totales": _delta(actual["ventas_totales"], anterior["ventas_totales"]),
+        "ordenes": _delta(actual["ordenes"], anterior["ordenes"]),
+        "ticket_promedio": _delta(actual["ticket_promedio"], anterior["ticket_promedio"]),
+        "unidades_totales": _delta(actual["unidades_totales"], anterior["unidades_totales"]),
+    }
+
+
 def distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
     con = get_connection()
     where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)

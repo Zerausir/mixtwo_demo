@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header, \
+from components.ui import con_carga, chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header, \
     umbral_efectivo
 from services.queries import hay_datos, pareto_productos
 
@@ -26,7 +26,7 @@ def layout():
             "inventario: si pocos productos explican casi todo, se gestionan distinto a un catálogo "
             "disperso.",
         ),
-        html.Div(id="productos-contenido"),
+        con_carga("carga-productos-contenido", html.Div(id="productos-contenido")),
     ])
 
 

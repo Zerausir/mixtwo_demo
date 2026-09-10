@@ -6,6 +6,7 @@ from dash import Input, Output, callback, dcc, html
 
 from components.ui import (
     chart_header,
+    con_carga,
     empty_state,
     formato_entero,
     formato_moneda,
@@ -14,6 +15,7 @@ from components.ui import (
     umbral_efectivo,
 )
 from services.queries import (
+    deltas_periodo_anterior,
     distribucion_ticket,
     hay_datos,
     resumen_general,
@@ -45,7 +47,7 @@ def layout():
                 "Se excluye siempre el centro administrativo (MATRIZ) y, según el control de "
                 "'Cuentas mayoristas' de arriba, las cuentas que superan el umbral configurado.",
             ),
-            html.Div(id="inicio-kpis"),
+            con_carga("carga-inicio-kpis", html.Div(id="inicio-kpis")),
             html.Div(className="chart-card", children=[
                 html.Div(
                     className="chart-controls-row",
@@ -87,9 +89,9 @@ def layout():
                         ]),
                     ],
                 ),
-                html.Div(id="inicio-tendencia"),
+                con_carga("carga-inicio-tendencia", html.Div(id="inicio-tendencia")),
             ]),
-            html.Div(id="inicio-detalle"),
+            con_carga("carga-inicio-detalle", html.Div(id="inicio-detalle")),
         ],
     )
 
@@ -162,6 +164,7 @@ def actualizar_kpis_y_detalle(sucursales, marcas, lineas, fecha_ini, fecha_fin, 
         return empty_state(), None
 
     resumen = resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    deltas = deltas_periodo_anterior(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     ticket = distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     dia_semana = ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
@@ -171,17 +174,22 @@ def actualizar_kpis_y_detalle(sucursales, marcas, lineas, fecha_ini, fecha_fin, 
 
     kpis = html.Div(className="kpi-grid", children=[
         kpi_card("Ventas totales", formato_moneda(resumen["ventas_totales"]),
-                 "Periodo y filtros seleccionados",
-                 ayuda="Suma de PRECIO_FINAL de todas las órdenes que cumplen los filtros de arriba."),
+                 "vs. el periodo anterior de igual duración",
+                 ayuda="Suma de PRECIO_FINAL de todas las órdenes que cumplen los filtros de arriba.",
+                 delta_pct=deltas["ventas_totales"]),
         kpi_card("Órdenes reales", formato_entero(resumen["ordenes"]),
-                 "Facturas, no líneas de producto",
+                 "vs. el periodo anterior de igual duración",
                  ayuda="Cada orden es una factura completa (puede tener varios productos). "
-                       "Una línea de producto no cuenta como orden aparte."),
+                       "Una línea de producto no cuenta como orden aparte.",
+                 delta_pct=deltas["ordenes"]),
         kpi_card("Ticket promedio", formato_moneda(resumen["ticket_promedio"]),
                  f"Mediana: {formato_moneda(resumen['ticket_mediana'])}",
                  ayuda="El promedio puede verse alto por compras grandes puntuales -- la mediana "
-                       "representa mejor la compra típica."),
-        kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"])),
+                       "representa mejor la compra típica.",
+                 delta_pct=deltas["ticket_promedio"]),
+        kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"]),
+                 "vs. el periodo anterior de igual duración",
+                 delta_pct=deltas["unidades_totales"]),
     ])
 
     detalle = html.Div(className="grid-2", children=[

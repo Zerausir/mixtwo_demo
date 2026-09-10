@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc, html
 
-from components.ui import chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header, \
+from components.ui import con_carga, chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header, \
     umbral_efectivo
 from services.queries import clientes_nuevos_vs_recurrentes, resumen_clientes
 
@@ -26,7 +26,7 @@ def layout():
             "que se esté mirando. Se excluyen las cuentas mayoristas según el control de arriba, para "
             "que dos cuentas corporativas no distorsionen las cifras de clientes individuales.",
         ),
-        html.Div(id="clientes-contenido"),
+        con_carga("carga-clientes-contenido", html.Div(id="clientes-contenido")),
     ])
 
 

@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_header, empty_state, page_header, umbral_efectivo
+from components.ui import con_carga, chart_header, empty_state, page_header, umbral_efectivo
 from services.queries import hay_datos, ventas_por_linea, ventas_por_marca
 
 dash.register_page(__name__, path="/marcas-lineas", name="Marcas y líneas")
@@ -24,7 +24,7 @@ def layout():
             "La marca no existe como campo explícito en el sistema de origen — se identifica "
             "automáticamente a partir del código del producto (cobertura: ~75% del valor de ventas).",
         ),
-        html.Div(id="marcas-contenido"),
+        con_carga("carga-marcas-contenido", html.Div(id="marcas-contenido")),
     ])
 
 

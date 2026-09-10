@@ -4,7 +4,7 @@ import dash
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
-from components.ui import chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header
+from components.ui import con_carga, chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header
 from services.queries import ranking_clientes, resumen_mayoristas
 
 dash.register_page(__name__, path="/mayoristas", name="Cuentas mayoristas")
@@ -26,7 +26,7 @@ def layout():
             "'Cuentas mayoristas' de la barra superior para ver el efecto de inmediato: ese mismo "
             "umbral es el que se aplica (si está activado) en el resto del panel.",
         ),
-        html.Div(id="mayoristas-contenido"),
+        con_carga("carga-mayoristas-contenido", html.Div(id="mayoristas-contenido")),
     ])
 
 

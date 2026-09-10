@@ -3,7 +3,7 @@ from __future__ import annotations
 import dash
 from dash import Input, Output, callback, dash_table, html
 
-from components.ui import empty_state, page_header, umbral_efectivo
+from components.ui import con_carga, empty_state, page_header, umbral_efectivo
 from services.queries import explorar_ventas, hay_datos, ventas_por_sucursal
 
 dash.register_page(__name__, path="/explorador", name="Explorador")
@@ -22,7 +22,7 @@ def layout():
             "Detalle de transacciones para los filtros seleccionados arriba. Útil para revisar "
             "casos puntuales, no para tendencias generales (usa Resumen para eso).",
         ),
-        html.Div(id="explorador-contenido"),
+        con_carga("carga-explorador-contenido", html.Div(id="explorador-contenido")),
     ])
 
 
