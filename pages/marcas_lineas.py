@@ -85,12 +85,29 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
         html.Div(className="table-card", children=[
             html.H3("Detalle por línea", className="chart-title"),
             dash_table.DataTable(
-                data=df_linea.round(2).to_dict("records"),
-                columns=[{"name": c, "id": c} for c in df_linea.columns],
+                data=df_linea.rename(columns={
+                    "linea": "Línea", "ventas": "Ventas (USD)", "unidades": "Unidades", "porcentaje": "% del total",
+                }).round(2).to_dict("records"),
+                columns=[{"name": c, "id": c} for c in ["Línea", "Ventas (USD)", "Unidades", "% del total"]],
                 style_as_list_view=True,
                 style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
                 style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
-                page_size=10,
+                sort_action="native", page_size=10,
+                export_format="xlsx", export_headers="display",
+            ),
+        ]),
+        html.Div(className="table-card", children=[
+            html.H3("Detalle por marca", className="chart-title"),
+            dash_table.DataTable(
+                data=df_marca.rename(columns={
+                    "marca": "Marca", "ventas": "Ventas (USD)", "unidades": "Unidades",
+                }).round(2).to_dict("records"),
+                columns=[{"name": c, "id": c} for c in ["Marca", "Ventas (USD)", "Unidades"]],
+                style_as_list_view=True,
+                style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
+                style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                sort_action="native", page_size=10,
+                export_format="xlsx", export_headers="display",
             ),
         ]),
     ]

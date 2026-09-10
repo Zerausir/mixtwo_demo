@@ -170,7 +170,8 @@ def actualizar(fecha_ini, fecha_fin, umbral):
                     }
                 ],
                 page_size=15,
-                sort_action="native",
+                sort_action="native", filter_action="native",
+                export_format="xlsx", export_headers="display",
             ),
         ]),
     ]

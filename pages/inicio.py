@@ -172,13 +172,18 @@ def actualizar_kpis_y_detalle(sucursales, marcas, lineas, fecha_ini, fecha_fin, 
     n_fuera_rango = int((ticket["valor_orden"] > recorte_p99).sum())
     pct_fuera_rango = (n_fuera_rango / len(ticket) * 100) if len(ticket) else 0
 
+    def _subtitulo_delta(delta, generico):
+        if delta is None:
+            return "Sin periodo anterior disponible para comparar"
+        return generico
+
     kpis = html.Div(className="kpi-grid", children=[
         kpi_card("Ventas totales", formato_moneda(resumen["ventas_totales"]),
-                 "vs. el periodo anterior de igual duración",
+                 _subtitulo_delta(deltas["ventas_totales"], "vs. el periodo anterior de igual duración"),
                  ayuda="Suma de PRECIO_FINAL de todas las órdenes que cumplen los filtros de arriba.",
                  delta_pct=deltas["ventas_totales"]),
         kpi_card("Órdenes reales", formato_entero(resumen["ordenes"]),
-                 "vs. el periodo anterior de igual duración",
+                 _subtitulo_delta(deltas["ordenes"], "vs. el periodo anterior de igual duración"),
                  ayuda="Cada orden es una factura completa (puede tener varios productos). "
                        "Una línea de producto no cuenta como orden aparte.",
                  delta_pct=deltas["ordenes"]),
@@ -188,7 +193,7 @@ def actualizar_kpis_y_detalle(sucursales, marcas, lineas, fecha_ini, fecha_fin, 
                        "representa mejor la compra típica.",
                  delta_pct=deltas["ticket_promedio"]),
         kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"]),
-                 "vs. el periodo anterior de igual duración",
+                 _subtitulo_delta(deltas["unidades_totales"], "vs. el periodo anterior de igual duración"),
                  delta_pct=deltas["unidades_totales"]),
     ])
 

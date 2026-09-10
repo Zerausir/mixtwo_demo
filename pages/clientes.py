@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import dash
 import plotly.graph_objects as go
-from dash import Input, Output, callback, dcc, html
+from dash import Input, Output, callback, dash_table, dcc, html
 
 from components.ui import con_carga, chart_header, empty_state, formato_entero, formato_moneda, kpi_card, page_header, \
     umbral_efectivo
-from services.queries import clientes_nuevos_vs_recurrentes, resumen_clientes
+from services.queries import clientes_nuevos_vs_recurrentes, listado_clientes, resumen_clientes
 
 dash.register_page(__name__, path="/clientes", name="Clientes")
 
@@ -74,9 +74,18 @@ def actualizar(fecha_ini, fecha_fin, mayorista_activo, umbral):
 
     resumen = resumen_clientes(fecha_ini, fecha_fin, umbral_ef)
     nuevos_rec = clientes_nuevos_vs_recurrentes(fecha_ini, fecha_fin, umbral_ef)
+    listado = listado_clientes(fecha_ini, fecha_fin, umbral_ef)
 
     if resumen["ordenes_totales"] == 0:
         return empty_state()
+
+    columnas_tabla = {
+        "identificacion": "Identificación", "cliente": "Cliente", "formato": "Formato",
+        "primera_compra": "Primera compra", "ultima_compra": "Última compra",
+        "ordenes": "Órdenes", "gasto_total": "Gasto total (USD)",
+        "ticket_promedio": "Ticket promedio (USD)", "tipo": "Tipo",
+    }
+    listado_mostrar = listado[list(columnas_tabla.keys())].rename(columns=columnas_tabla)
 
     return [
         html.Div(className="kpi-grid", children=[
@@ -121,5 +130,29 @@ def actualizar(fecha_ini, fecha_fin, mayorista_activo, umbral):
                 "identificación en caja) habilita más análisis de clientes a futuro.",
             ),
             dcc.Graph(figure=_fig_formato(resumen), config={"displayModeBar": False}),
+        ]),
+        html.Div(className="table-card", children=[
+            html.H3(f"Listado de clientes ({formato_entero(len(listado))})", className="chart-title"),
+            html.P(
+                "Busca por identificación o nombre escribiendo en la fila de filtro bajo cada "
+                "encabezado. Usa el botón 'Export' para descargar este listado completo a Excel.",
+                className="chart-caption",
+            ),
+            dash_table.DataTable(
+                data=listado_mostrar.round(2).to_dict("records"),
+                columns=[{"name": c, "id": c} for c in listado_mostrar.columns],
+                style_as_list_view=True,
+                style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px", "fontSize": "13px"},
+                style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                style_data_conditional=[
+                    {
+                        "if": {"filter_query": "{Tipo} = Recurrente"},
+                        "backgroundColor": "#F5DEE1",
+                        "color": "#9C4F5C",
+                    }
+                ],
+                sort_action="native", filter_action="native", page_size=20,
+                export_format="xlsx", export_headers="display",
+            ),
         ]),
     ]

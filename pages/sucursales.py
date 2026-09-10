@@ -106,6 +106,7 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
                 ],
                 sort_action="native",
                 page_size=10,
+                export_format="xlsx", export_headers="display",
             ),
         ]),
     ]

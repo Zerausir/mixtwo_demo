@@ -527,6 +527,45 @@ def ranking_clientes(fecha_ini, fecha_fin, limite: int = 40) -> pd.DataFrame:
     return df
 
 
+def listado_clientes(fecha_ini, fecha_fin, umbral_mayorista=None) -> pd.DataFrame:
+    """
+    Listado COMPLETO de clientes identificados (no un top 40 como
+    ranking_clientes) -- para la tabla de la página Clientes, con filtro
+    nativo por columna para que se pueda buscar un cliente puntual por
+    identificación o nombre. Respeta el umbral de mayoristas (si está
+    activo) para que la tabla no incluya las cuentas corporativas que ya
+    se excluyen del resto de la página.
+    """
+    con = get_connection()
+    condiciones = ["SUCURSAL != ?", "FORMATO_ID != ?"]
+    params: list = [SUCURSAL_EXCLUIDA, IDENTIFICACION_GENERICA]
+    if umbral_mayorista is not None:
+        sub_sql, sub_params = _subquery_mayoristas(fecha_ini, fecha_fin, umbral_mayorista)
+        condiciones.append(f"IDENTIFICACION NOT IN ({sub_sql})")
+        params.extend(sub_params)
+    if fecha_ini:
+        condiciones.append("DATE(FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append("DATE(FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+    where = " AND ".join(condiciones)
+
+    df = pd.read_sql(
+        f"""SELECT IDENTIFICACION AS identificacion, CLIENTE AS cliente, FORMATO_ID AS formato,
+                   MIN(DATE(FECHA)) AS primera_compra, MAX(DATE(FECHA)) AS ultima_compra,
+                   COUNT(DISTINCT ORDEN_ID) AS ordenes, SUM(PRECIO_FINAL) AS gasto_total
+            FROM ventas WHERE {where}
+            GROUP BY IDENTIFICACION, CLIENTE, FORMATO_ID
+            ORDER BY gasto_total DESC""",
+        con, params=params,
+    )
+    con.close()
+    df["ticket_promedio"] = (df["gasto_total"] / df["ordenes"]).round(2)
+    df["tipo"] = df["ordenes"].apply(lambda n: "Recurrente" if n >= 2 else "Nuevo/única compra")
+    return df
+
+
 def resumen_mayoristas(fecha_ini, fecha_fin, umbral: int) -> dict:
     """KPIs de cabecera para la página de detección: cuántas cuentas caen
     sobre el umbral actual y qué porcentaje del negocio representan."""

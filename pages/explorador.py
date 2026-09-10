@@ -55,6 +55,7 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
                 style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "6px", "fontSize": "13px"},
                 style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
                 page_size=15, sort_action="native", filter_action="native",
+                export_format="xlsx", export_headers="display",
             ),
         ]),
         html.Div(className="table-card", children=[
@@ -74,6 +75,7 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
                     }
                 ],
                 page_size=10,
+                export_format="xlsx", export_headers="display",
             ),
         ]),
     ]
