@@ -17,7 +17,7 @@ from services.queries import (
     distribucion_ticket,
     hay_datos,
     resumen_general,
-    ventas_diarias_por_mes,
+    serie_temporal,
     ventas_por_dia_semana,
 )
 
@@ -28,7 +28,11 @@ FILTROS = [
     Input("filtro-sucursal", "value"), Input("filtro-marca", "value"), Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
     Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
+    Input("metrica-selector", "value"), Input("granularidad-selector", "value"),
 ]
+
+METRICA_LABEL = {"ventas": "Ventas (USD)", "ordenes": "Órdenes", "unidades": "Unidades vendidas"}
+METRICA_FORMATO = {"ventas": "moneda", "ordenes": "entero", "unidades": "entero"}
 
 
 def layout():
@@ -46,16 +50,18 @@ def layout():
     )
 
 
-def _fig_tendencia(df) -> go.Figure:
+def _fig_tendencia(df, metrica: str) -> go.Figure:
     colores = ["#D8C4C7" if incompleto else "#9C4F5C" for incompleto in df["incompleto"]]
+    formato_y = "$,.0f" if METRICA_FORMATO[metrica] == "moneda" else ",.0f"
     fig = go.Figure(go.Bar(
-        x=df["mes"], y=df["promedio_diario"], marker_color=colores,
+        x=df["periodo"], y=df["valor"], marker_color=colores,
         text=["Datos incompletos" if p else "" for p in df["incompleto"]], textposition="outside",
-        hovertemplate="%{x}<br>Promedio diario: $%{y:,.0f}<extra></extra>",
+        hovertemplate="%{x}<br>" + METRICA_LABEL[metrica] + f": %{{y:{formato_y}}}<extra></extra>",
     ))
-    fig.update_layout(margin=dict(l=40, r=20, t=20, b=40), height=320,
+    fig.update_layout(margin=dict(l=50, r=20, t=20, b=60), height=340,
                       plot_bgcolor="white", paper_bgcolor="white",
-                      yaxis_title="Venta promedio diaria (USD)", font=FONT)
+                      yaxis_title=METRICA_LABEL[metrica], font=FONT,
+                      xaxis=dict(tickangle=-35 if len(df) > 12 else 0))
     return fig
 
 
@@ -101,19 +107,24 @@ def _fig_dia_semana(df) -> go.Figure:
 
 
 @callback(Output("inicio-contenido", "children"), *FILTROS)
-def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
+def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral, metrica, granularidad):
     umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+    metrica = metrica or "ventas"
+    granularidad = granularidad or "mes"
 
     if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef):
         return empty_state()
 
     resumen = resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
-    tendencia = ventas_diarias_por_mes(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    tendencia = serie_temporal(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef, metrica, granularidad)
     ticket = distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     dia_semana = ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
     recorte_p99 = ticket["valor_orden"].quantile(0.99)
     n_fuera_rango = int((ticket["valor_orden"] > recorte_p99).sum())
+
+    granularidad_label = {"dia": "diaria", "semana": "semanal", "mes": "mensual"}[granularidad]
+    umbral_incompleto = {"dia": None, "semana": "7 días", "mes": "el mes completo"}[granularidad]
 
     return [
         html.Div(className="kpi-grid", children=[
@@ -131,16 +142,41 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
             kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"])),
         ]),
         html.Div(className="chart-card", children=[
-            chart_header(
-                "Venta promedio diaria por mes",
-                "Se usa el promedio por día, no la suma del mes completo, para que un mes con menos "
-                "días de datos no se vea como una caída de ventas. Las barras en color claro marcadas "
-                "'Datos incompletos' tienen menos de 25 días de venta registrados dentro de los "
-                "filtros elegidos -- puede ser porque el corte de la muestra ocurre a mitad de ese mes, "
-                "o porque la tienda/marca/línea filtrada no tuvo actividad todo el mes (por ejemplo, "
-                "una tienda que abrió a fin de mes). Compáralas con cuidado frente a las demás.",
+            html.Div(
+                className="chart-controls-row",
+                children=[
+                    chart_header(
+                        "Tendencia",
+                        f"Elige qué métrica ver y con qué nivel de detalle (día, semana o mes). Con "
+                        f"granularidad {granularidad_label}, las barras en color claro marcadas "
+                        f"'Datos incompletos' no tienen "
+                        + (umbral_incompleto if umbral_incompleto else "todos los datos del periodo")
+                        + " dentro de los filtros elegidos -- compáralas con cuidado frente a las demás.",
+                    ),
+                    html.Div(className="chart-selectors", children=[
+                        dcc.RadioItems(
+                            id="metrica-selector",
+                            options=[
+                                {"label": " Ventas", "value": "ventas"},
+                                {"label": " Órdenes", "value": "ordenes"},
+                                {"label": " Unidades", "value": "unidades"},
+                            ],
+                            value=metrica, className="selector-pill-group", inline=True,
+                        ),
+                        dcc.RadioItems(
+                            id="granularidad-selector",
+                            options=[
+                                {"label": " Día", "value": "dia"},
+                                {"label": " Semana", "value": "semana"},
+                                {"label": " Mes", "value": "mes"},
+                            ],
+                            value=granularidad, className="selector-pill-group", inline=True,
+                        ),
+                    ]),
+                ],
             ),
-            dcc.Graph(figure=_fig_tendencia(tendencia), config={"displayModeBar": False}),
+            dcc.Graph(figure=_fig_tendencia(tendencia, metrica),
+                      config={"displayModeBar": False}) if not tendencia.empty else empty_state(),
         ]),
         html.Div(className="grid-2", children=[
             html.Div(className="chart-card", children=[

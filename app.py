@@ -34,6 +34,8 @@ FILTROS_POR_PAGINA = {
     "/": {"sucursal": True, "marca": True, "linea": True},
     "/marcas-lineas": {"sucursal": True, "marca": True, "linea": True},
     "/sucursales": {"sucursal": False, "marca": True, "linea": True},
+    "/productos": {"sucursal": True, "marca": True, "linea": True},
+    "/clientes": {"sucursal": False, "marca": False, "linea": False},
     "/mayoristas": {"sucursal": False, "marca": False, "linea": False},
     "/prediccion": {"sucursal": True, "marca": False, "linea": False},
     "/explorador": {"sucursal": True, "marca": True, "linea": True},
@@ -65,7 +67,9 @@ def navigation() -> html.Div:
                             dcc.Link("Resumen", href="/", id="nav-link-/", className="nav-link"),
                             dcc.Link("Marcas y líneas", href="/marcas-lineas", id="nav-link-/marcas-lineas",
                                      className="nav-link"),
+                            dcc.Link("Productos", href="/productos", id="nav-link-/productos", className="nav-link"),
                             dcc.Link("Sucursales", href="/sucursales", id="nav-link-/sucursales", className="nav-link"),
+                            dcc.Link("Clientes", href="/clientes", id="nav-link-/clientes", className="nav-link"),
                             dcc.Link("Cuentas mayoristas", href="/mayoristas", id="nav-link-/mayoristas",
                                      className="nav-link"),
                             dcc.Link("Predicción", href="/prediccion", id="nav-link-/prediccion", className="nav-link"),
@@ -223,7 +227,8 @@ def actualizar_filtros_deshabilitados(pathname):
     return not aplica["sucursal"], not aplica["marca"], not aplica["linea"]
 
 
-NAV_PATHS = ["/", "/marcas-lineas", "/sucursales", "/mayoristas", "/prediccion", "/explorador"]
+NAV_PATHS = ["/", "/marcas-lineas", "/productos", "/sucursales", "/clientes", "/mayoristas", "/prediccion",
+             "/explorador"]
 
 
 @callback(
@@ -260,7 +265,7 @@ def actualizar_chips_filtros(pathname, sucursales, marcas, lineas, fecha_ini, fe
     aplica = FILTROS_POR_PAGINA.get(pathname, {"sucursal": True, "marca": True, "linea": True})
 
     mayorista_texto = f"Excluidas si superan {umbral} órdenes" if (
-                mayorista_activo and "excluir" in mayorista_activo and umbral) else "Incluidas (sin excluir)"
+            mayorista_activo and "excluir" in mayorista_activo and umbral) else "Incluidas (sin excluir)"
 
     return [
         filtro_chip("Sucursal", _etiqueta_lista(sucursales), aplica["sucursal"]),

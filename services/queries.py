@@ -389,3 +389,194 @@ def resumen_mayoristas(fecha_ini, fecha_fin, umbral: int) -> dict:
         "ventas_totales": float(total),
         "porcentaje": (ventas_mayoristas / total * 100) if total else 0.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Serie temporal con granularidad y métrica configurables -- generaliza lo
+# que antes era una sola vista fija (promedio diario por mes). Permite
+# elegir Ventas/Órdenes/Unidades y Día/Semana/Mes desde la página Resumen.
+# ---------------------------------------------------------------------------
+_METRICA_SQL = {
+    "ventas": "SUM(PRECIO_FINAL)",
+    "ordenes": "COUNT(DISTINCT ORDEN_ID)",
+    "unidades": "SUM(CANTIDAD)",
+}
+
+
+def serie_temporal(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista, metrica: str,
+                   granularidad: str) -> pd.DataFrame:
+    """
+    metrica: 'ventas' | 'ordenes' | 'unidades'
+    granularidad: 'dia' | 'semana' | 'mes'
+
+    Siempre agrega primero por día (nivel atómico) y luego reagrupa en
+    Python -- así se calcula la cobertura real de cada periodo (cuántos
+    días de calendario tiene dato adentro) sin duplicar lógica SQL por
+    cada nivel de granularidad.
+    """
+    con = get_connection()
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
+    expr = _METRICA_SQL[metrica]
+    diario = pd.read_sql(
+        f"SELECT DATE(FECHA) AS dia, {expr} AS valor FROM ventas {where} GROUP BY dia ORDER BY dia",
+        con, params=params,
+    )
+    con.close()
+
+    if diario.empty:
+        return diario
+
+    diario["dia"] = pd.to_datetime(diario["dia"])
+
+    if granularidad == "dia":
+        diario["periodo"] = diario["dia"].dt.strftime("%d/%m/%Y")
+        diario["incompleto"] = False  # un día es la unidad atómica, siempre "completo"
+        return diario[["periodo", "valor", "incompleto"]]
+
+    if granularidad == "semana":
+        diario["clave"] = diario["dia"].dt.to_period("W-SUN")
+        dias_esperados = 7
+        etiqueta = lambda p: f"{p.start_time.strftime('%d/%m')}–{p.end_time.strftime('%d/%m')}"
+    else:  # mes
+        diario["clave"] = diario["dia"].dt.to_period("M")
+        etiqueta = lambda p: p.strftime("%b %Y")
+
+    if granularidad == "mes":
+        resumen = diario.groupby("clave").agg(valor=("valor", "sum"), dias_con_datos=("dia", "nunique")).reset_index()
+        resumen["dias_esperados"] = resumen["clave"].apply(lambda p: p.days_in_month)
+    else:
+        resumen = diario.groupby("clave").agg(valor=("valor", "sum"), dias_con_datos=("dia", "nunique")).reset_index()
+        resumen["dias_esperados"] = dias_esperados
+
+    resumen["periodo"] = resumen["clave"].apply(etiqueta)
+    resumen["incompleto"] = resumen["dias_con_datos"] < (resumen["dias_esperados"] * 0.8)
+    return resumen[["periodo", "valor", "incompleto"]]
+
+
+# ---------------------------------------------------------------------------
+# Clientes: nuevos vs. recurrentes, y resumen de captura de identificación.
+# Deliberadamente SOLO filtrado por fecha y umbral de mayoristas -- el
+# estatus de un cliente (nuevo/recurrente, identificado/consumidor final)
+# es una propiedad del cliente, no del producto que se esté mirando (mismo
+# criterio que la página de Mayoristas).
+# ---------------------------------------------------------------------------
+def resumen_clientes(fecha_ini, fecha_fin, umbral_mayorista) -> dict:
+    con = get_connection()
+    condiciones = ["SUCURSAL != ?"]
+    params: list = [SUCURSAL_EXCLUIDA]
+    if umbral_mayorista is not None:
+        sub_sql, sub_params = _subquery_mayoristas(fecha_ini, fecha_fin, umbral_mayorista)
+        condiciones.append(f"IDENTIFICACION NOT IN ({sub_sql})")
+        params.extend(sub_params)
+    if fecha_ini:
+        condiciones.append("DATE(FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append("DATE(FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+    where = " AND ".join(condiciones)
+
+    df = pd.read_sql(
+        f"""SELECT ORDEN_ID, IDENTIFICACION, FORMATO_ID, PRECIO_FINAL
+            FROM ventas WHERE {where}""",
+        con, params=params,
+    )
+    con.close()
+
+    ordenes = df.groupby("ORDEN_ID").agg(
+        identificacion=("IDENTIFICACION", "first"),
+        formato=("FORMATO_ID", "first"),
+        valor=("PRECIO_FINAL", "sum"),
+    )
+    es_generico = ordenes["formato"] == IDENTIFICACION_GENERICA
+    ordenes_id = ordenes[~es_generico]
+
+    por_cliente = ordenes_id.groupby("identificacion").size()
+    clientes_recurrentes = int((por_cliente >= 2).sum())
+    clientes_totales = int(len(por_cliente))
+
+    return {
+        "ordenes_totales": int(len(ordenes)),
+        "ordenes_consumidor_final": int(es_generico.sum()),
+        "pct_ordenes_consumidor_final": float(es_generico.mean() * 100) if len(ordenes) else 0.0,
+        "ventas_consumidor_final": float(ordenes[es_generico]["valor"].sum()),
+        "pct_ventas_consumidor_final": float(ordenes[es_generico]["valor"].sum() / ordenes["valor"].sum() * 100) if
+        ordenes["valor"].sum() else 0.0,
+        "ticket_consumidor_final": float(ordenes[es_generico]["valor"].mean()) if es_generico.sum() else 0.0,
+        "ticket_identificado": float(ordenes_id["valor"].mean()) if len(ordenes_id) else 0.0,
+        "clientes_identificados": clientes_totales,
+        "clientes_recurrentes": clientes_recurrentes,
+        "tasa_recompra": (clientes_recurrentes / clientes_totales * 100) if clientes_totales else 0.0,
+    }
+
+
+def clientes_nuevos_vs_recurrentes(fecha_ini, fecha_fin, umbral_mayorista) -> pd.DataFrame:
+    """Por mes: cuántas órdenes son de clientes en su primer mes de compra
+    ('nuevo') vs. de clientes que ya habían comprado antes ('recurrente')."""
+    con = get_connection()
+    condiciones = ["SUCURSAL != ?", "FORMATO_ID != ?"]
+    params: list = [SUCURSAL_EXCLUIDA, IDENTIFICACION_GENERICA]
+    if umbral_mayorista is not None:
+        sub_sql, sub_params = _subquery_mayoristas(fecha_ini, fecha_fin, umbral_mayorista)
+        condiciones.append(f"IDENTIFICACION NOT IN ({sub_sql})")
+        params.extend(sub_params)
+    if fecha_ini:
+        condiciones.append("DATE(FECHA) >= DATE(?)")
+        params.append(fecha_ini)
+    if fecha_fin:
+        condiciones.append("DATE(FECHA) <= DATE(?)")
+        params.append(fecha_fin)
+    where = " AND ".join(condiciones)
+
+    df = pd.read_sql(
+        f"SELECT ORDEN_ID, IDENTIFICACION, FECHA FROM ventas WHERE {where}",
+        con, params=params,
+    )
+    con.close()
+
+    if df.empty:
+        return df
+
+    df["FECHA"] = pd.to_datetime(df["FECHA"])
+    df["mes"] = df["FECHA"].dt.to_period("M")
+
+    primera_compra = df.groupby("IDENTIFICACION")["FECHA"].min().dt.to_period("M")
+    df["es_nuevo"] = df["IDENTIFICACION"].map(primera_compra) == df["mes"]
+
+    ordenes = df.groupby(["mes", "ORDEN_ID"]).agg(es_nuevo=("es_nuevo", "first")).reset_index()
+    resumen = ordenes.groupby(["mes", "es_nuevo"]).size().reset_index(name="ordenes")
+    resumen["periodo"] = resumen["mes"].astype(str)
+    resumen["tipo"] = resumen["es_nuevo"].map({True: "Nuevos", False: "Recurrentes"})
+    return resumen[["periodo", "tipo", "ordenes"]]
+
+
+# ---------------------------------------------------------------------------
+# Pareto de productos -- ¿cuántos SKUs explican el 80% de las ventas?
+# Filtrado por sucursal/marca/línea/fecha/mayorista, igual que el resto del
+# panel (a diferencia de Clientes/Mayoristas, aquí sí tiene sentido cruzar
+# por producto/tienda).
+# ---------------------------------------------------------------------------
+def pareto_productos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista, top_n: int = 20) -> dict:
+    con = get_connection()
+    where, params = _where_clause(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_mayorista)
+    df = pd.read_sql(
+        f"""SELECT CODIGO AS codigo, PRODUCTO AS producto, SUM(PRECIO_FINAL) AS ventas
+            FROM ventas {where} GROUP BY codigo, producto ORDER BY ventas DESC""",
+        con, params=params,
+    )
+    con.close()
+
+    if df.empty:
+        return {"top": df, "n_skus": 0, "n_para_80": 0, "pct_skus_para_80": 0.0}
+
+    total = df["ventas"].sum()
+    df["acumulado_pct"] = df["ventas"].cumsum() / total * 100 if total else 0
+    n_para_80 = int((df["acumulado_pct"] <= 80).sum()) + 1
+    n_para_80 = min(n_para_80, len(df))
+
+    return {
+        "top": df.head(top_n).reset_index(drop=True),
+        "n_skus": int(len(df)),
+        "n_para_80": n_para_80,
+        "pct_skus_para_80": (n_para_80 / len(df) * 100) if len(df) else 0.0,
+    }
