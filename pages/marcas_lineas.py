@@ -41,11 +41,15 @@ def _fig_linea(df) -> go.Figure:
 
 
 def _fig_marca(df) -> go.Figure:
+    total = df["ventas"].sum()
+    pct = (df["ventas"] / total * 100) if total else df["ventas"] * 0
     fig = go.Figure(go.Bar(
         x=df["marca"], y=df["ventas"], marker_color="#201A1A",
-        hovertemplate="%{x}<br>Ventas: $%{y:,.0f}<extra></extra>",
+        customdata=pct,
+        text=[f"{p:.1f}%" for p in pct], textposition="outside",
+        hovertemplate="%{x}<br>Ventas: $%{y:,.0f} (%{customdata:.1f}% de las marcas mostradas)<extra></extra>",
     ))
-    fig.update_layout(margin=dict(l=50, r=20, t=20, b=80), height=360,
+    fig.update_layout(margin=dict(l=50, r=20, t=30, b=80), height=360,
                       plot_bgcolor="white", paper_bgcolor="white",
                       yaxis_title="Ventas (USD)", font=FONT)
     return fig

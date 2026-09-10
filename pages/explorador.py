@@ -35,6 +35,8 @@ def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activ
 
     df = explorar_ventas(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     df_sucursal = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    total_ventas = df_sucursal["ventas"].sum()
+    df_sucursal["% del total"] = (df_sucursal["ventas"] / total_ventas * 100).round(1) if total_ventas else 0
 
     return [
         html.Div(className="table-card", children=[

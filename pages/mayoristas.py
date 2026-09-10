@@ -55,6 +55,32 @@ def _fig_ranking(ranking, umbral: int, top_n: int = 15) -> go.Figure:
     return fig
 
 
+def _fig_gasto(ranking, umbral: int, top_n: int = 15) -> go.Figure:
+    """
+    Mismo ranking, pero ordenado por gasto total en vez de número de
+    órdenes -- deliberadamente un ranking DISTINTO al de arriba, no el
+    mismo dato repetido. Un cliente puede tener pocas órdenes pero gasto
+    alto (compras grandes y esporádicas) o muchas órdenes de bajo valor --
+    ver ambos rankings lado a lado muestra esa diferencia, que el ranking
+    por órdenes solo no revela.
+    """
+    top = ranking.sort_values("gasto_total", ascending=False).head(top_n).iloc[::-1]
+    total_general = ranking["gasto_total"].sum()
+    pct = (top["gasto_total"] / total_general * 100) if total_general else top["gasto_total"] * 0
+    colores = ["#9C4F5C" if o > umbral else "#D8C4C7" for o in top["ordenes"]]
+
+    fig = go.Figure(go.Bar(
+        x=top["gasto_total"], y=top["cliente"], orientation="h", marker_color=colores,
+        customdata=pct,
+        text=[f"${v:,.0f}" for v in top["gasto_total"]], textposition="outside",
+        hovertemplate="%{y}<br>$%{x:,.2f} (%{customdata:.1f}% del gasto de todos los clientes identificados)<extra></extra>",
+    ))
+    fig.update_layout(margin=dict(l=170, r=60, t=30, b=40), height=420,
+                      plot_bgcolor="white", paper_bgcolor="white",
+                      xaxis_title="Gasto total en el periodo (USD)", font=FONT)
+    return fig
+
+
 @callback(Output("mayoristas-contenido", "children"), *FILTROS)
 def actualizar(fecha_ini, fecha_fin, umbral):
     umbral = int(umbral) if umbral else 15
@@ -93,16 +119,28 @@ def actualizar(fecha_ini, fecha_fin, umbral):
                 "Referencia, sin excluir nada",
             ),
         ]),
-        html.Div(className="chart-card", children=[
-            chart_header(
-                "Top clientes por número de órdenes",
-                "Cada barra es un cliente identificado. La línea punteada marca el umbral actual -- "
-                "muévelo en el control 'Cuentas mayoristas' de arriba y observa cómo cambia qué barras "
-                "quedan resaltadas. El salto entre la segunda y la tercera barra es la evidencia "
-                "visual de que hay un grupo de cuentas cualitativamente distinto al resto, no un "
-                "corte arbitrario.",
-            ),
-            dcc.Graph(figure=_fig_ranking(ranking, umbral), config={"displayModeBar": False}),
+        html.Div(className="grid-2", children=[
+            html.Div(className="chart-card", children=[
+                chart_header(
+                    "Top clientes por número de órdenes",
+                    "Cada barra es un cliente identificado. La línea punteada marca el umbral actual -- "
+                    "muévelo en el control 'Cuentas mayoristas' de arriba y observa cómo cambia qué "
+                    "barras quedan resaltadas. El salto entre la segunda y la tercera barra es la "
+                    "evidencia visual de que hay un grupo de cuentas cualitativamente distinto al "
+                    "resto, no un corte arbitrario.",
+                ),
+                dcc.Graph(figure=_fig_ranking(ranking, umbral), config={"displayModeBar": False}),
+            ]),
+            html.Div(className="chart-card", children=[
+                chart_header(
+                    "Top clientes por gasto total",
+                    "Mismo grupo de clientes, ordenado por cuánto gastaron en vez de cuántas veces "
+                    "compraron -- un ranking distinto, no el mismo dato repetido. Si alguien aparece "
+                    "arriba aquí pero no en el gráfico de la izquierda, son compras grandes y poco "
+                    "frecuentes, no un patrón de recompra mayorista.",
+                ),
+                dcc.Graph(figure=_fig_gasto(ranking, umbral), config={"displayModeBar": False}),
+            ]),
         ]),
         html.Div(
             className="note-box important",

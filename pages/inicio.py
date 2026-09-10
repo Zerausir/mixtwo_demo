@@ -24,11 +24,11 @@ from services.queries import (
 dash.register_page(__name__, path="/", name="Resumen")
 
 FONT = dict(family="Inter, Segoe UI, Arial, sans-serif", size=12)
-FILTROS = [
+
+FILTROS_GLOBALES = [
     Input("filtro-sucursal", "value"), Input("filtro-marca", "value"), Input("filtro-linea", "value"),
     Input("filtro-fechas", "start_date"), Input("filtro-fechas", "end_date"),
     Input("filtro-mayorista-activo", "value"), Input("filtro-mayorista-umbral", "value"),
-    Input("metrica-selector", "value"), Input("granularidad-selector", "value"),
 ]
 
 METRICA_LABEL = {"ventas": "Ventas (USD)", "ordenes": "Órdenes", "unidades": "Unidades vendidas"}
@@ -45,7 +45,51 @@ def layout():
                 "Se excluye siempre el centro administrativo (MATRIZ) y, según el control de "
                 "'Cuentas mayoristas' de arriba, las cuentas que superan el umbral configurado.",
             ),
-            html.Div(id="inicio-contenido"),
+            html.Div(id="inicio-kpis"),
+            html.Div(className="chart-card", children=[
+                html.Div(
+                    className="chart-controls-row",
+                    children=[
+                        chart_header(
+                            "Tendencia",
+                            "Elige qué métrica ver y con qué nivel de detalle (día, semana o mes). Las "
+                            "barras en color claro marcadas 'Datos incompletos' no tienen todos los días "
+                            "esperados dentro de ese periodo (corte de la muestra a mitad de semana/mes, "
+                            "o la tienda/marca/línea filtrada no tuvo actividad todo el tiempo) -- "
+                            "compáralas con cuidado frente a las demás.",
+                        ),
+                        # Estos dos controles viven en la parte ESTÁTICA de la página (no dentro
+                        # de ningún callback) a propósito: un componente solo puede usarse como
+                        # Input de un callback si ya existe en el árbol de la página desde el
+                        # principio. Definirlos dentro del propio contenido que el callback genera
+                        # crea una dependencia circular -- el callback nunca se dispara porque el
+                        # control del que depende no existe todavía. Esto causó que la página
+                        # completa se viera en blanco.
+                        html.Div(className="chart-selectors", children=[
+                            dcc.RadioItems(
+                                id="metrica-selector",
+                                options=[
+                                    {"label": " Ventas", "value": "ventas"},
+                                    {"label": " Órdenes", "value": "ordenes"},
+                                    {"label": " Unidades", "value": "unidades"},
+                                ],
+                                value="ventas", className="selector-pill-group", inline=True,
+                            ),
+                            dcc.RadioItems(
+                                id="granularidad-selector",
+                                options=[
+                                    {"label": " Día", "value": "dia"},
+                                    {"label": " Semana", "value": "semana"},
+                                    {"label": " Mes", "value": "mes"},
+                                ],
+                                value="mes", className="selector-pill-group", inline=True,
+                            ),
+                        ]),
+                    ],
+                ),
+                html.Div(id="inicio-tendencia"),
+            ]),
+            html.Div(id="inicio-detalle"),
         ],
     )
 
@@ -96,106 +140,88 @@ def _fig_boxplot_ticket(df) -> go.Figure:
 
 
 def _fig_dia_semana(df) -> go.Figure:
+    total = df["venta_promedio"].sum()
+    porcentajes = (df["venta_promedio"] / total * 100) if total else df["venta_promedio"] * 0
     fig = go.Figure(go.Bar(
         x=df["dia_semana"], y=df["venta_promedio"], marker_color="#201A1A",
-        hovertemplate="%{x}<br>Venta promedio: $%{y:,.0f}<extra></extra>",
+        customdata=porcentajes,
+        hovertemplate="%{x}<br>Venta promedio: $%{y:,.0f} (%{customdata:.1f}% del promedio semanal)<extra></extra>",
+        text=[f"{p:.0f}%" for p in porcentajes], textposition="outside",
     ))
-    fig.update_layout(margin=dict(l=40, r=20, t=20, b=40), height=300,
+    fig.update_layout(margin=dict(l=40, r=20, t=30, b=40), height=300,
                       plot_bgcolor="white", paper_bgcolor="white",
                       yaxis_title="Venta promedio (USD)", font=FONT)
     return fig
 
 
-@callback(Output("inicio-contenido", "children"), *FILTROS)
-def actualizar(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral, metrica, granularidad):
+@callback(Output("inicio-kpis", "children"), Output("inicio-detalle", "children"), *FILTROS_GLOBALES)
+def actualizar_kpis_y_detalle(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
     umbral_ef = umbral_efectivo(mayorista_activo, umbral)
-    metrica = metrica or "ventas"
-    granularidad = granularidad or "mes"
 
     if not hay_datos(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef):
-        return empty_state()
+        return empty_state(), None
 
     resumen = resumen_general(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
-    tendencia = serie_temporal(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef, metrica, granularidad)
     ticket = distribucion_ticket(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
     dia_semana = ventas_por_dia_semana(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
 
     recorte_p99 = ticket["valor_orden"].quantile(0.99)
     n_fuera_rango = int((ticket["valor_orden"] > recorte_p99).sum())
+    pct_fuera_rango = (n_fuera_rango / len(ticket) * 100) if len(ticket) else 0
 
-    granularidad_label = {"dia": "diaria", "semana": "semanal", "mes": "mensual"}[granularidad]
-    umbral_incompleto = {"dia": None, "semana": "7 días", "mes": "el mes completo"}[granularidad]
+    kpis = html.Div(className="kpi-grid", children=[
+        kpi_card("Ventas totales", formato_moneda(resumen["ventas_totales"]),
+                 "Periodo y filtros seleccionados",
+                 ayuda="Suma de PRECIO_FINAL de todas las órdenes que cumplen los filtros de arriba."),
+        kpi_card("Órdenes reales", formato_entero(resumen["ordenes"]),
+                 "Facturas, no líneas de producto",
+                 ayuda="Cada orden es una factura completa (puede tener varios productos). "
+                       "Una línea de producto no cuenta como orden aparte."),
+        kpi_card("Ticket promedio", formato_moneda(resumen["ticket_promedio"]),
+                 f"Mediana: {formato_moneda(resumen['ticket_mediana'])}",
+                 ayuda="El promedio puede verse alto por compras grandes puntuales -- la mediana "
+                       "representa mejor la compra típica."),
+        kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"])),
+    ])
 
-    return [
-        html.Div(className="kpi-grid", children=[
-            kpi_card("Ventas totales", formato_moneda(resumen["ventas_totales"]),
-                     "Periodo y filtros seleccionados",
-                     ayuda="Suma de PRECIO_FINAL de todas las órdenes que cumplen los filtros de arriba."),
-            kpi_card("Órdenes reales", formato_entero(resumen["ordenes"]),
-                     "Facturas, no líneas de producto",
-                     ayuda="Cada orden es una factura completa (puede tener varios productos). "
-                           "Una línea de producto no cuenta como orden aparte."),
-            kpi_card("Ticket promedio", formato_moneda(resumen["ticket_promedio"]),
-                     f"Mediana: {formato_moneda(resumen['ticket_mediana'])}",
-                     ayuda="El promedio puede verse alto por compras grandes puntuales -- la mediana "
-                           "representa mejor la compra típica."),
-            kpi_card("Unidades vendidas", formato_entero(resumen["unidades_totales"])),
+    detalle = html.Div(className="grid-2", children=[
+        html.Div(className="chart-card", children=[
+            chart_header(
+                "Distribución del valor de orden",
+                "La caja muestra dónde están la mayoría de las compras (mediana y cuartiles); "
+                "la línea punteada es el promedio. El eje se recorta en el percentil 99"
+                + (f" -- el {pct_fuera_rango:.1f}% de las órdenes ({n_fuera_rango}) queda fuera de "
+                   "este rango, revísalas en Explorador si te interesan." if n_fuera_rango else "."),
+            ),
+            dcc.Graph(figure=_fig_boxplot_ticket(ticket), config={"displayModeBar": False}),
         ]),
         html.Div(className="chart-card", children=[
-            html.Div(
-                className="chart-controls-row",
-                children=[
-                    chart_header(
-                        "Tendencia",
-                        f"Elige qué métrica ver y con qué nivel de detalle (día, semana o mes). Con "
-                        f"granularidad {granularidad_label}, las barras en color claro marcadas "
-                        f"'Datos incompletos' no tienen "
-                        + (umbral_incompleto if umbral_incompleto else "todos los datos del periodo")
-                        + " dentro de los filtros elegidos -- compáralas con cuidado frente a las demás.",
-                    ),
-                    html.Div(className="chart-selectors", children=[
-                        dcc.RadioItems(
-                            id="metrica-selector",
-                            options=[
-                                {"label": " Ventas", "value": "ventas"},
-                                {"label": " Órdenes", "value": "ordenes"},
-                                {"label": " Unidades", "value": "unidades"},
-                            ],
-                            value=metrica, className="selector-pill-group", inline=True,
-                        ),
-                        dcc.RadioItems(
-                            id="granularidad-selector",
-                            options=[
-                                {"label": " Día", "value": "dia"},
-                                {"label": " Semana", "value": "semana"},
-                                {"label": " Mes", "value": "mes"},
-                            ],
-                            value=granularidad, className="selector-pill-group", inline=True,
-                        ),
-                    ]),
-                ],
+            chart_header(
+                "Venta promedio por día de la semana",
+                "Promedio histórico de ventas para cada día, y qué porcentaje representa sobre el "
+                "promedio semanal total. Útil para planear personal y reposición: los días más altos "
+                "necesitan más preparación.",
             ),
-            dcc.Graph(figure=_fig_tendencia(tendencia, metrica),
-                      config={"displayModeBar": False}) if not tendencia.empty else empty_state(),
+            dcc.Graph(figure=_fig_dia_semana(dia_semana), config={"displayModeBar": False}),
         ]),
-        html.Div(className="grid-2", children=[
-            html.Div(className="chart-card", children=[
-                chart_header(
-                    "Distribución del valor de orden",
-                    "La caja muestra dónde están la mayoría de las compras (mediana y cuartiles); "
-                    "la línea punteada es el promedio. El eje se recorta en el percentil 99"
-                    + (f" -- quedan {n_fuera_rango} órdenes grandes fuera de este rango, revísalas en "
-                       "Explorador si te interesan." if n_fuera_rango else "."),
-                ),
-                dcc.Graph(figure=_fig_boxplot_ticket(ticket), config={"displayModeBar": False}),
-            ]),
-            html.Div(className="chart-card", children=[
-                chart_header(
-                    "Venta promedio por día de la semana",
-                    "Promedio histórico de ventas para cada día. Útil para planear personal y "
-                    "reposición: los días más altos necesitan más preparación.",
-                ),
-                dcc.Graph(figure=_fig_dia_semana(dia_semana), config={"displayModeBar": False}),
-            ]),
-        ]),
-    ]
+    ])
+
+    return kpis, detalle
+
+
+@callback(
+    Output("inicio-tendencia", "children"),
+    *FILTROS_GLOBALES,
+    Input("metrica-selector", "value"), Input("granularidad-selector", "value"),
+)
+def actualizar_tendencia(sucursales, marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral, metrica,
+                         granularidad):
+    umbral_ef = umbral_efectivo(mayorista_activo, umbral)
+    metrica = metrica or "ventas"
+    granularidad = granularidad or "mes"
+
+    tendencia = serie_temporal(sucursales, marcas, lineas, fecha_ini, fecha_fin, umbral_ef, metrica, granularidad)
+    if tendencia.empty:
+        return empty_state()
+
+    return dcc.Graph(figure=_fig_tendencia(tendencia, metrica), config={"displayModeBar": False})

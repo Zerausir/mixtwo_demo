@@ -50,6 +50,8 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
 
     mix = mix_linea_por_sucursal(marcas, fecha_ini, fecha_fin, umbral_ef)
     resumen = ventas_por_sucursal(marcas, lineas, fecha_ini, fecha_fin, umbral_ef)
+    total_ventas = resumen["ventas"].sum()
+    resumen["% del total"] = (resumen["ventas"] / total_ventas * 100).round(1) if total_ventas else 0
 
     return [
         html.Div(className="chart-card", children=[
@@ -71,6 +73,7 @@ def actualizar(marcas, lineas, fecha_ini, fecha_fin, mayorista_activo, umbral):
                 style_as_list_view=True,
                 style_cell={"fontFamily": "Inter, Segoe UI, Arial, sans-serif", "padding": "8px"},
                 style_header={"fontWeight": "600", "backgroundColor": "#FBF3F1"},
+                sort_action="native",
                 page_size=10,
             ),
         ]),
