@@ -41,6 +41,7 @@ def _fig_ranking(ranking, umbral: int, top_n: int = 15) -> go.Figure:
     """
     top = ranking.head(top_n).iloc[::-1]  # invertido para que el #1 quede arriba
     colores = ["#9C4F5C" if o > umbral else "#D8C4C7" for o in top["ordenes"]]
+    limite_x = top["ordenes"].max() * 1.15  # espacio extra para que la etiqueta de texto no se corte
 
     fig = go.Figure(go.Bar(
         x=top["ordenes"], y=top["cliente"], orientation="h", marker_color=colores,
@@ -51,7 +52,7 @@ def _fig_ranking(ranking, umbral: int, top_n: int = 15) -> go.Figure:
                   annotation_text=f"Umbral: {umbral}", annotation_position="top")
     fig.update_layout(margin=dict(l=170, r=40, t=30, b=40), height=420,
                       plot_bgcolor="white", paper_bgcolor="white",
-                      xaxis_title="Órdenes distintas en el periodo", font=FONT)
+                      xaxis=dict(title="Órdenes distintas en el periodo", range=[0, limite_x]), font=FONT)
     return fig
 
 
@@ -68,6 +69,7 @@ def _fig_gasto(ranking, umbral: int, top_n: int = 15) -> go.Figure:
     total_general = ranking["gasto_total"].sum()
     pct = (top["gasto_total"] / total_general * 100) if total_general else top["gasto_total"] * 0
     colores = ["#9C4F5C" if o > umbral else "#D8C4C7" for o in top["ordenes"]]
+    limite_x = top["gasto_total"].max() * 1.2  # espacio extra: etiquetas "$X,XXX" son más largas que números sueltos
 
     fig = go.Figure(go.Bar(
         x=top["gasto_total"], y=top["cliente"], orientation="h", marker_color=colores,
@@ -77,7 +79,7 @@ def _fig_gasto(ranking, umbral: int, top_n: int = 15) -> go.Figure:
     ))
     fig.update_layout(margin=dict(l=170, r=60, t=30, b=40), height=420,
                       plot_bgcolor="white", paper_bgcolor="white",
-                      xaxis_title="Gasto total en el periodo (USD)", font=FONT)
+                      xaxis=dict(title="Gasto total en el periodo (USD)", range=[0, limite_x]), font=FONT)
     return fig
 
 
