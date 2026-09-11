@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dash
+import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, callback, dash_table, dcc, html
 
@@ -27,6 +28,16 @@ def layout():
             "que dos cuentas corporativas no distorsionen las cifras de clientes individuales.",
         ),
         con_carga("carga-clientes-contenido", html.Div(id="clientes-contenido")),
+        # Este contenedor vive en la parte ESTÁTICA de la página (no dentro
+        # de "clientes-contenido") a propósito: su callback depende de
+        # "tabla-clientes", un componente que solo existe DESPUÉS de que el
+        # callback de "clientes-contenido" haya corrido. Es una cadena de
+        # dos pasos válida (A crea la tabla -> B reacciona a la tabla), muy
+        # distinta del bug de Resumen (donde un control estaba adentro del
+        # mismo callback que lo necesitaba como entrada, un ciclo de un
+        # solo paso que nunca se disparaba). Aun así, este contenedor debe
+        # existir desde el principio para que la cadena funcione.
+        con_carga("carga-clientes-ranking", html.Div(id="clientes-ranking-grafico")),
     ])
 
 
@@ -65,6 +76,36 @@ def _fig_formato(resumen: dict) -> go.Figure:
     fig.update_layout(margin=dict(l=40, r=20, t=20, b=40), height=300,
                       plot_bgcolor="white", paper_bgcolor="white",
                       yaxis_title="Órdenes", font=FONT)
+    return fig
+
+
+def _fig_ranking_clientes(df: pd.DataFrame) -> go.Figure:
+    """
+    Barras múltiples (órdenes + gasto total) por cliente -- reacciona al
+    filtro nativo de la tabla de clientes (ver derived_virtual_data en el
+    callback de abajo). Con dos métricas de escala muy distinta ($ vs.
+    conteo de órdenes), se usan dos ejes Y en vez de forzarlas a la misma
+    escala, que aplastaría una de las dos barras.
+    """
+    etiquetas = df["Cliente"].str.title()
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=etiquetas, y=df["Gasto total (USD)"], name="Gasto total (USD)",
+        marker_color="#9C4F5C", yaxis="y1",
+        hovertemplate="%{x}<br>Gasto: $%{y:,.2f}<extra></extra>",
+    ))
+    fig.add_trace(go.Bar(
+        x=etiquetas, y=df["Órdenes"], name="Órdenes", marker_color="#201A1A", yaxis="y2",
+        hovertemplate="%{x}<br>Órdenes: %{y}<extra></extra>",
+    ))
+    fig.update_layout(
+        barmode="group", margin=dict(l=50, r=50, t=30, b=110), height=420,
+        plot_bgcolor="white", paper_bgcolor="white", font=FONT,
+        xaxis=dict(tickangle=-45),
+        yaxis=dict(title="Gasto total (USD)"),
+        yaxis2=dict(title="Órdenes", overlaying="y", side="right"),
+        legend=dict(orientation="h", y=1.1),
+    )
     return fig
 
 
@@ -139,6 +180,7 @@ def actualizar(fecha_ini, fecha_fin, mayorista_activo, umbral):
                 className="chart-caption",
             ),
             dash_table.DataTable(
+                id="tabla-clientes",
                 data=listado_mostrar.round(2).to_dict("records"),
                 columns=[{"name": c, "id": c} for c in listado_mostrar.columns],
                 style_as_list_view=True,
@@ -156,3 +198,36 @@ def actualizar(fecha_ini, fecha_fin, mayorista_activo, umbral):
             ),
         ]),
     ]
+
+
+@callback(Output("clientes-ranking-grafico", "children"), Input("tabla-clientes", "derived_virtual_data"))
+def actualizar_ranking_clientes(filas_filtradas):
+    """
+    Reacciona al filtro nativo de la tabla de arriba: si buscas un cliente
+    puntual, este gráfico se reduce a esa búsqueda. `derived_virtual_data`
+    es el listado completo que coincide con el filtro actual (no solo la
+    página visible), así que refleja exactamente lo que la tabla está
+    mostrando -- no una copia aparte que se pueda desincronizar de ella.
+    """
+    if not filas_filtradas:
+        return empty_state("No hay clientes que coincidan con el filtro de la tabla de arriba.")
+
+    df = pd.DataFrame(filas_filtradas)
+    total_coincidencias = len(df)
+    df = df.sort_values("Gasto total (USD)", ascending=False).head(25)
+
+    if total_coincidencias > 25:
+        caption_extra = (
+            f"Mostrando los 25 de mayor gasto, de {total_coincidencias} clientes que coinciden con "
+            "el filtro de la tabla de arriba -- estrecha la búsqueda para ver un cliente puntual."
+        )
+    else:
+        caption_extra = (
+            f"Mostrando los {total_coincidencias} clientes que coinciden con el filtro de la tabla "
+            "de arriba."
+        )
+
+    return html.Div(className="chart-card", children=[
+        chart_header("Órdenes y gasto por cliente", caption_extra),
+        dcc.Graph(figure=_fig_ranking_clientes(df), config={"displayModeBar": False}),
+    ])
